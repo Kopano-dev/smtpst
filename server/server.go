@@ -27,6 +27,8 @@ type Server struct {
 	config *Config
 
 	logger logrus.FieldLogger
+
+	httpClient *http.Client
 }
 
 // NewServer constructs a server from the provided parameters.
@@ -34,6 +36,8 @@ func NewServer(c *Config) (*Server, error) {
 	s := &Server{
 		config: c,
 		logger: c.Logger,
+
+		httpClient: &http.Client{},
 	}
 
 	return s, nil
@@ -120,10 +124,12 @@ func (server *Server) Serve(ctx context.Context) error {
 		}
 		u.RawQuery = params.Encode()
 
-		c := &http.Client{}
 		request, _ := http.NewRequestWithContext(serveCtx, http.MethodPost, u.String(), nil)
-		request.SetBasicAuth("dev", "secret")
-		response, requestErr := c.Do(request)
+		secret := os.Getenv("SMTPST_SECRET_DEV")
+		if secret != "" {
+			request.SetBasicAuth("dev", secret)
+		}
+		response, requestErr := server.httpClient.Do(request)
 		if requestErr != nil {
 			errCh <- fmt.Errorf("failed to create smtpst session: %w", requestErr)
 			return

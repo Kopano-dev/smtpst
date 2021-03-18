@@ -6,7 +6,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +26,14 @@ type RouteMeta struct {
 	Domain string           `json:"domain"`
 	ID     string           `json:"id"`
 	Expiry *jwt.NumericDate `json:"exp"`
+}
+
+type RouteStatus struct {
+	Success bool `json:"success"`
+
+	Code         int               `json:"code"`
+	EnhancedCode smtp.EnhancedCode `json:"enhanced_code,omitempty"`
+	Message      string            `json:"message"`
 }
 
 var (
@@ -47,42 +57,92 @@ func (server *Server) handleReceiveRoute(ctx context.Context, domainsClaims *Dom
 		return errRouteExpired
 	}
 
+	logger := server.logger.WithFields(logrus.Fields{
+		"domain": route.Domain,
+		"id":     route.ID,
+	})
+
 	u := server.config.APIBaseURI.ResolveReference(&url.URL{
 		Path: "/v0/smtpst/session/" + domainsClaims.sessionID + "/route/" + route.ID + "/receive",
 	})
-	c := &http.Client{}
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
-	request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
-	server.logger.WithField("url", u.String()).Debugln("requesting route receive")
-	response, requestErr := c.Do(request)
-	if requestErr != nil {
-		return fmt.Errorf("failed to request route receive: %w", requestErr)
+
+	err := func() error {
+		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
+		logger.Debugln("route requesting receive")
+		response, requestErr := server.httpClient.Do(request)
+		if requestErr != nil {
+			return fmt.Errorf("failed to request route receive: %w", requestErr)
+		}
+
+		defer response.Body.Close()
+
+		if response.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed to request route receive, unexpected response status: %d", response.StatusCode)
+		}
+
+		from := response.Header.Get("X-Smtpst-From")
+		rcptTo := response.Header["X-Smtpst-Rcptto"]
+
+		smtpLogger := logger.WithFields(logrus.Fields{
+			"from":    from,
+			"rcpt_to": rcptTo,
+		})
+		smtpLogger.Debugln("route routing receive smtp start")
+		devRcptTo := os.Getenv("SMTPST_DEV_RCPTTO")
+		if devRcptTo != "" {
+			rcptTo = []string{devRcptTo}
+			logger.WithField("rcpt_to", rcptTo).Warnln("dev route for all mail in effect")
+		}
+		err := server.sendMail("127.0.0.1:25", from, rcptTo, response.Body)
+		if err != nil {
+			smtpLogger.WithError(err).Warnln("failed to route receive via smtp")
+		} else {
+			smtpLogger.Debugln("route routing receive smtp success")
+		}
+
+		return err
+	}()
+	// Send status to server.
+	status := &RouteStatus{
+		Success: err == nil,
+	}
+	if err != nil {
+		if e, ok := err.(*smtp.SMTPError); ok {
+			status.Code = e.Code
+			status.EnhancedCode = e.EnhancedCode
+			status.Message = e.Message
+		} else {
+			status.Message = err.Error()
+		}
 	}
 
-	defer response.Body.Close()
+	err = func() error {
+		statusBuf := &bytes.Buffer{}
+		if encodeErr := json.NewEncoder(statusBuf).Encode(status); encodeErr != nil {
+			return fmt.Errorf("failed to encode route receive status: %w", encodeErr)
+		}
 
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to request route receive with unexpected status: %d", response.StatusCode)
-	}
+		request, _ := http.NewRequestWithContext(ctx, http.MethodPatch, u.String(), statusBuf)
+		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
+		logger.Debugln("route sending route receive status")
+		response, requestErr := server.httpClient.Do(request)
+		if requestErr != nil {
+			return fmt.Errorf("failed to send route receive status: %w", requestErr)
+		}
 
-	from := response.Header.Get("X-Smtpst-From")
-	rcptTo := response.Header["X-Smtpst-Rcptto"]
+		defer response.Body.Close()
 
-	server.logger.WithFields(logrus.Fields{
-		"from":    from,
-		"rcpt_to": rcptTo,
-	}).Debugln("route receive smtp")
+		if response.StatusCode != http.StatusNoContent {
+			return fmt.Errorf("failed to send route receive status, unexpected response status: %d", response.StatusCode)
+		} else {
+			logger.Debugln("route sending route receive complete")
+		}
 
-	devRcptTo := os.Getenv("SMTPST_DEV_RCPTTO")
-	if devRcptTo != "" {
-		rcptTo = []string{devRcptTo}
-		server.logger.WithField("rcpt_to", rcptTo).Warnln("dev route for all mail in effect")
-	}
-
-	sendErr := server.sendMail("127.0.0.1:25", from, rcptTo, response.Body)
-	if sendErr != nil {
-		server.logger.WithError(sendErr).Warnln("failed to route receive via smtp")
-		return sendErr
+		return nil
+	}()
+	if err != nil {
+		logger.WithError(err).Warnln("route sending route receive error, mail might be duplicated")
 	}
 
 	return nil
