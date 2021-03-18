@@ -6,6 +6,8 @@
 package server
 
 import (
+	"net/url"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -14,4 +16,8 @@ type Config struct {
 	Logger logrus.FieldLogger
 
 	OnReady func(*Server)
+
+	APIBaseURI *url.URL
+
+	Domains []string
 }
