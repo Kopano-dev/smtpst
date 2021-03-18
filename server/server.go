@@ -9,8 +9,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -38,13 +41,13 @@ func NewServer(c *Config) (*Server, error) {
 
 // Serve starts all the accociated servers resources and listeners and blocks
 // forever until signals or error occurs.
-func (s *Server) Serve(ctx context.Context) error {
+func (server *Server) Serve(ctx context.Context) error {
 	var err error
 
 	serveCtx, serveCtxCancel := context.WithCancel(ctx)
 	defer serveCtxCancel()
 
-	logger := s.logger
+	logger := server.logger
 
 	errCh := make(chan error, 2)
 	exitCh := make(chan struct{}, 1)
@@ -65,12 +68,52 @@ func (s *Server) Serve(ctx context.Context) error {
 		close(readyCh)
 	}()
 
-	// Add stuff here.
+	eventCh := make(chan *TextEvent, 128)
+	go func() {
+		var domainsClaims *DomainsClaims
+		for {
+			select {
+			case <-serveCtx.Done():
+				return
+
+			case currentEvent := <-eventCh:
+				switch currentEvent.Event {
+				case "domains":
+					newDomainsClaims, parseErr := server.parseDomainsToken(currentEvent.Data)
+					if parseErr != nil {
+						logger.WithError(parseErr).WithField("event", currentEvent.Event).Warnln("failed to parse token data")
+						continue
+					}
+					domainsClaims = newDomainsClaims
+					logger.WithFields(logrus.Fields{
+						"domains":    domainsClaims.Domains,
+						"session_id": domainsClaims.sessionID,
+					}).Debugln("domains event received")
+
+				case "receive":
+					var route RouteMeta
+					if parseErr := json.Unmarshal([]byte(currentEvent.Data), &route); parseErr != nil {
+						logger.WithError(parseErr).WithField("event", currentEvent.Event).Warnln("failed to parse JSON data")
+						continue
+					}
+					if handleErr := server.handleReceiveRoute(serveCtx, domainsClaims, &route); handleErr != nil {
+						logger.WithError(handleErr).WithField("event", currentEvent.Event).Warnln("failed to process route")
+						continue
+					}
+
+				default:
+					logger.WithField("event", currentEvent.Event).Warnln("unknown event type")
+				}
+			}
+		}
+	}()
+
 	go func() {
 		defer close(exitCh)
 
+		u, _ := url.Parse("https://mose4:10443/v0/smtpst/session?domain=blah.dev.kopano.xyz")
 		c := &http.Client{}
-		request, _ := http.NewRequestWithContext(serveCtx, http.MethodPost, "https://mose4:10443/v0/smtpst/session", nil)
+		request, _ := http.NewRequestWithContext(serveCtx, http.MethodPost, u.String(), nil)
 		request.SetBasicAuth("dev", "secret")
 		response, requestErr := c.Do(request)
 		if requestErr != nil {
@@ -91,7 +134,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		for {
 			lineBytes, readErr := reader.ReadBytes('\n')
 			if readErr != nil {
-				errCh <- fmt.Errorf("failed to read: %w", readErr)
+				if readErr != io.EOF {
+					errCh <- fmt.Errorf("failed to read: %w", readErr)
+				}
 				return
 			}
 
@@ -100,24 +145,24 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 
 			lineBytesParts := bytes.SplitN(lineBytes, separator, 2)
-			// data: {"domain":"lala.dev.kopano.xyz","id":"8d32d625-ed55-4ca3-ac7a-02560bfa32fb","exp":1616060125}
 			if len(lineBytesParts[0]) == 0 {
 				continue // Ignore comments like ": heartbeat"
 			}
 
 			switch string(lineBytesParts[0]) {
 			case "data":
-				currentEvent.Data = string(lineBytesParts[1])
-				logger.Debugf("xxx received event: %s, %s", currentEvent.Event, currentEvent.Data)
-
+				currentEvent.Data = string(bytes.TrimSpace(lineBytesParts[1]))
+				select {
+				case eventCh <- currentEvent:
+				default:
+					logger.Warnln("event channel full, ignored event") // TODO(longsleep): Log some parts of the actual data.
+				}
 				currentEvent = &TextEvent{}
 
 			case "event":
-				currentEvent.Event = string(lineBytesParts[1])
+				currentEvent.Event = string(bytes.TrimSpace(lineBytesParts[1]))
 			}
 		}
-
-		logger.Debugln("xxx response", response)
 	}()
 
 	// Wait for error, with support for HUP to reload

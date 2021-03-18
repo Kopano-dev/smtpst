@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 
 	systemDaemon "github.com/coreos/go-systemd/v22/daemon"
@@ -50,6 +51,8 @@ func serve(cmd *cobra.Command, args []string) error {
 
 	logger.Debugln("serve start")
 
+	apiBaseURL, _ := url.Parse("https://mose4:10443/")
+
 	cfg := &server.Config{
 		Logger: logger,
 
@@ -62,6 +65,8 @@ func serve(cmd *cobra.Command, args []string) error {
 				}
 			}
 		},
+
+		APIBaseURI: apiBaseURL,
 	}
 
 	srv, err := server.NewServer(cfg)
