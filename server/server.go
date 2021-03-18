@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jpillora/backoff"
 	"github.com/sirupsen/logrus"
 )
 
@@ -129,52 +129,73 @@ func (server *Server) Serve(ctx context.Context) error {
 		if secret != "" {
 			request.SetBasicAuth("dev", secret)
 		}
-		response, requestErr := server.httpClient.Do(request)
-		if requestErr != nil {
-			errCh <- fmt.Errorf("failed to create smtpst session: %w", requestErr)
-			return
+
+		connector := func() error {
+			logger.Debugln("connecting session")
+			response, requestErr := server.httpClient.Do(request)
+			if requestErr != nil {
+				return fmt.Errorf("failed to create smtpst session: %w", requestErr)
+			}
+
+			reader := bufio.NewReader(response.Body)
+			defer response.Body.Close()
+
+			if response.StatusCode != http.StatusOK {
+				return fmt.Errorf("failed to create smtpst session with unexpected status: %d", response.StatusCode)
+			}
+			logger.Debugln("session connection established")
+
+			separator := []byte{':', ' '}
+			currentEvent := &TextEvent{}
+			for {
+				lineBytes, readErr := reader.ReadBytes('\n')
+				if readErr != nil {
+					return fmt.Errorf("failed to read: %w", readErr)
+				}
+
+				if len(lineBytes) < 2 {
+					continue
+				}
+
+				lineBytesParts := bytes.SplitN(lineBytes, separator, 2)
+				if len(lineBytesParts[0]) == 0 {
+					continue // Ignore comments like ": heartbeat"
+				}
+
+				switch string(lineBytesParts[0]) {
+				case "data":
+					currentEvent.Data = string(bytes.TrimSpace(lineBytesParts[1]))
+					select {
+					case eventCh <- currentEvent:
+					default:
+						logger.Warnln("event channel full, ignored event") // TODO(longsleep): Log some parts of the actual data.
+					}
+					currentEvent = &TextEvent{}
+
+				case "event":
+					currentEvent.Event = string(bytes.TrimSpace(lineBytesParts[1]))
+				}
+			}
 		}
 
-		reader := bufio.NewReader(response.Body)
-		defer response.Body.Close()
-
-		if response.StatusCode != http.StatusOK {
-			errCh <- fmt.Errorf("failed to create smtpst session with unexpected status: %d", response.StatusCode)
-			return
+		bo := &backoff.Backoff{
+			Min:    1 * time.Second,
+			Max:    60 * time.Second,
+			Factor: 3,
+			Jitter: true,
 		}
-
-		separator := []byte{':', ' '}
-		currentEvent := &TextEvent{}
 		for {
-			lineBytes, readErr := reader.ReadBytes('\n')
-			if readErr != nil {
-				if readErr != io.EOF {
-					errCh <- fmt.Errorf("failed to read: %w", readErr)
-				}
+			connErr := connector()
+			if connErr != nil {
+				logger.WithError(connErr).Errorln("session connection error")
+			} else {
+				bo.Reset()
+			}
+
+			select {
+			case <-serveCtx.Done():
 				return
-			}
-
-			if len(lineBytes) < 2 {
-				continue
-			}
-
-			lineBytesParts := bytes.SplitN(lineBytes, separator, 2)
-			if len(lineBytesParts[0]) == 0 {
-				continue // Ignore comments like ": heartbeat"
-			}
-
-			switch string(lineBytesParts[0]) {
-			case "data":
-				currentEvent.Data = string(bytes.TrimSpace(lineBytesParts[1]))
-				select {
-				case eventCh <- currentEvent:
-				default:
-					logger.Warnln("event channel full, ignored event") // TODO(longsleep): Log some parts of the actual data.
-				}
-				currentEvent = &TextEvent{}
-
-			case "event":
-				currentEvent.Event = string(bytes.TrimSpace(lineBytesParts[1]))
+			case <-time.After(bo.Duration()):
 			}
 		}
 	}()
