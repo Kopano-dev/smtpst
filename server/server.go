@@ -6,7 +6,11 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -61,7 +65,62 @@ func (s *Server) Serve(ctx context.Context) error {
 		close(readyCh)
 	}()
 
-	// Wait for exit or error, with support for HUP to reload
+	// Add stuff here.
+	go func() {
+		defer close(exitCh)
+
+		c := &http.Client{}
+		request, _ := http.NewRequestWithContext(serveCtx, http.MethodPost, "https://mose4:10443/v0/smtpst/session", nil)
+		request.SetBasicAuth("dev", "secret")
+		response, requestErr := c.Do(request)
+		if requestErr != nil {
+			errCh <- fmt.Errorf("failed to create smtpst session: %w", requestErr)
+			return
+		}
+
+		reader := bufio.NewReader(response.Body)
+		defer response.Body.Close()
+
+		if response.StatusCode != http.StatusOK {
+			errCh <- fmt.Errorf("failed to create smtpst session with unexpected status: %d", response.StatusCode)
+			return
+		}
+
+		separator := []byte{':', ' '}
+		currentEvent := &TextEvent{}
+		for {
+			lineBytes, readErr := reader.ReadBytes('\n')
+			if readErr != nil {
+				errCh <- fmt.Errorf("failed to read: %w", readErr)
+				return
+			}
+
+			if len(lineBytes) < 2 {
+				continue
+			}
+
+			lineBytesParts := bytes.SplitN(lineBytes, separator, 2)
+			// data: {"domain":"lala.dev.kopano.xyz","id":"8d32d625-ed55-4ca3-ac7a-02560bfa32fb","exp":1616060125}
+			if len(lineBytesParts[0]) == 0 {
+				continue // Ignore comments like ": heartbeat"
+			}
+
+			switch string(lineBytesParts[0]) {
+			case "data":
+				currentEvent.Data = string(lineBytesParts[1])
+				logger.Debugf("xxx received event: %s, %s", currentEvent.Event, currentEvent.Data)
+
+				currentEvent = &TextEvent{}
+
+			case "event":
+				currentEvent.Event = string(lineBytesParts[1])
+			}
+		}
+
+		logger.Debugln("xxx response", response)
+	}()
+
+	// Wait for error, with support for HUP to reload
 	err = func() error {
 		signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 		for {
@@ -85,7 +144,6 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	// Shutdown, server will stop to accept new connections, requires Go 1.8+.
 	logger.Infoln("clean server shutdown start")
-	close(exitCh)
 
 	// Cancel our own context,
 	serveCtxCancel()
