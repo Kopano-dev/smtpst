@@ -17,7 +17,13 @@ import (
 	"stash.kopano.io/kgol/smtpst/server"
 )
 
-var defaultSystemdNotify = false
+var (
+	defaultLogTimestamp  = true
+	defaultLogLevel      = "info"
+	defaultSystemdNotify = false
+	defaultProviderURL   = ""
+	defaultDomains       = []string{}
+)
 
 func commandServe() *cobra.Command {
 	serveCmd := &cobra.Command{
@@ -31,9 +37,11 @@ func commandServe() *cobra.Command {
 		},
 	}
 
-	serveCmd.Flags().Bool("log-timestamp", true, "Prefix each log line with timestamp")
-	serveCmd.Flags().String("log-level", "info", "Log level (one of panic, fatal, error, warn, info or debug)")
+	serveCmd.Flags().BoolVar(&defaultLogTimestamp, "log-timestamp", defaultLogTimestamp, "Prefix each log line with timestamp")
+	serveCmd.Flags().StringVar(&defaultLogLevel, "log-level", defaultLogLevel, "Log level (one of panic, fatal, error, warn, info or debug)")
 	serveCmd.Flags().BoolVar(&defaultSystemdNotify, "systemd-notify", defaultSystemdNotify, "Enable systemd sd_notify callback")
+	serveCmd.Flags().StringVar(&defaultProviderURL, "provider-url", defaultProviderURL, "URL to the SMTP secure transport provider API")
+	serveCmd.Flags().StringArrayVar(&defaultDomains, "domain", defaultDomains, "Domain to receive for")
 
 	return serveCmd
 }
@@ -41,17 +49,20 @@ func commandServe() *cobra.Command {
 func serve(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	logTimestamp, _ := cmd.Flags().GetBool("log-timestamp")
-	logLevel, _ := cmd.Flags().GetString("log-level")
-
-	logger, err := newLogger(!logTimestamp, logLevel)
+	logger, err := newLogger(!defaultLogTimestamp, defaultLogLevel)
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
 
 	logger.Debugln("serve start")
 
-	apiBaseURL, _ := url.Parse("https://mose4:10443/")
+	apiBaseURL, err := url.Parse(defaultProviderURL)
+	if err != nil {
+		return fmt.Errorf("invalid provider-url: %w", err)
+	}
+	if apiBaseURL.Host == "" {
+		return fmt.Errorf("provider-url must not be empty")
+	}
 
 	cfg := &server.Config{
 		Logger: logger,
@@ -67,6 +78,8 @@ func serve(cmd *cobra.Command, args []string) error {
 		},
 
 		APIBaseURI: apiBaseURL,
+
+		Domains: defaultDomains,
 	}
 
 	srv, err := server.NewServer(cfg)

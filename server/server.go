@@ -111,7 +111,15 @@ func (server *Server) Serve(ctx context.Context) error {
 	go func() {
 		defer close(exitCh)
 
-		u, _ := url.Parse("https://mose4:10443/v0/smtpst/session?domain=blah.dev.kopano.xyz")
+		u := server.config.APIBaseURI.ResolveReference(&url.URL{
+			Path: "/v0/smtpst/session",
+		})
+		params := &url.Values{}
+		for _, domain := range server.config.Domains {
+			params.Add("domain", domain)
+		}
+		u.RawQuery = params.Encode()
+
 		c := &http.Client{}
 		request, _ := http.NewRequestWithContext(serveCtx, http.MethodPost, u.String(), nil)
 		request.SetBasicAuth("dev", "secret")

@@ -18,4 +18,6 @@ type Config struct {
 	OnReady func(*Server)
 
 	APIBaseURI *url.URL
+
+	Domains []string
 }
