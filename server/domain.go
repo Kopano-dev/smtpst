@@ -62,6 +62,7 @@ func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *Do
 	if requestErr != nil {
 		return fmt.Errorf("failed refresh token: %w", requestErr)
 	}
+	response.Body.Close()
 
 	if response.StatusCode == http.StatusNotModified {
 		server.logger.Debugln("tried to refresh token too early")
