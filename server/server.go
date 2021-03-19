@@ -58,6 +58,7 @@ func (server *Server) Serve(ctx context.Context) error {
 	signalCh := make(chan os.Signal, 1)
 	readyCh := make(chan struct{}, 1)
 	triggerCh := make(chan bool, 1)
+	authCh := make(chan *DomainsClaims)
 
 	go func() {
 		select {
@@ -93,6 +94,7 @@ func (server *Server) Serve(ctx context.Context) error {
 						"domains":    domainsClaims.Domains,
 						"session_id": domainsClaims.sessionID,
 					}).Debugln("domains event received")
+					authCh <- domainsClaims
 
 				case "receive":
 					var route RouteMeta
@@ -137,14 +139,16 @@ func (server *Server) Serve(ctx context.Context) error {
 		}
 		u.RawQuery = params.Encode()
 
-		request, _ := http.NewRequestWithContext(serveCtx, http.MethodPost, u.String(), nil)
-		secret := os.Getenv("SMTPST_SECRET_DEV")
-		if secret != "" {
-			request.SetBasicAuth("dev", secret)
-		}
+		var domainsClaims *DomainsClaims
 
 		connector := func() error {
 			logger.Debugln("connecting session")
+			request, _ := http.NewRequestWithContext(serveCtx, http.MethodPost, u.String(), nil)
+			secret := os.Getenv("SMTPST_SECRET_DEV")
+			if secret != "" {
+				request.SetBasicAuth("dev", secret)
+			}
+
 			response, requestErr := server.httpClient.Do(request)
 			if requestErr != nil {
 				return fmt.Errorf("failed to create smtpst session: %w", requestErr)
@@ -153,10 +157,35 @@ func (server *Server) Serve(ctx context.Context) error {
 			reader := bufio.NewReader(response.Body)
 			defer response.Body.Close()
 
-			if response.StatusCode != http.StatusOK {
+			switch response.StatusCode {
+			case http.StatusOK:
+				// All good.
+			case http.StatusNotAcceptable:
+				if domainsClaims != nil {
+					// Throw away current session data as server demed them not acceptable.
+					domainsClaims = nil
+					logger.WithField("session_id", domainsClaims.sessionID).Warnln("failed to resume smtpst session, clearing session data")
+					return fmt.Errorf("failed to create smtpst session with not acceptable response: %d", response.StatusCode)
+				}
+				fallthrough
+			default:
 				return fmt.Errorf("failed to create smtpst session with unexpected status: %d", response.StatusCode)
 			}
+
 			logger.Debugln("session connection established")
+
+			stopCh := make(chan struct{})
+			defer close(stopCh)
+			go func() {
+				for {
+					select {
+					case <-stopCh:
+						return
+					case domainsClaims = <-authCh:
+						logger.WithField("session_id", domainsClaims.sessionID).Debugln("session data updated")
+					}
+				}
+			}()
 
 			separator := []byte{':', ' '}
 			currentEvent := &TextEvent{}
@@ -197,6 +226,7 @@ func (server *Server) Serve(ctx context.Context) error {
 			Factor: 3,
 			Jitter: true,
 		}
+
 		for {
 			connErr := connector()
 			if connErr != nil {
@@ -209,6 +239,17 @@ func (server *Server) Serve(ctx context.Context) error {
 			case <-serveCtx.Done():
 				return
 			case <-time.After(bo.Duration()):
+			}
+
+			if domainsClaims != nil {
+				logger.WithField("session_id", domainsClaims.sessionID).Debugln("reusing existing session")
+				params.Del("domains")
+				for _, domain := range domainsClaims.Domains {
+					params.Add("domain", domain)
+				}
+				params.Set("sid", domainsClaims.sessionID)
+				params.Set("domain_token_hint", domainsClaims.raw)
+				u.RawQuery = params.Encode()
 			}
 		}
 	}()
