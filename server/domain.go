@@ -6,6 +6,10 @@
 package server
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
 	"time"
 
 	"gopkg.in/square/go-jose.v2/jwt"
@@ -39,7 +43,30 @@ func (server *Server) parseDomainsToken(raw string) (*DomainsClaims, error) {
 
 	// Copy over standard claims.
 	domainsClaims.sessionID = claims.Subject
+	domainsClaims.expiration = claims.Expiry.Time()
 	domainsClaims.raw = raw
 
 	return domainsClaims, nil
+}
+
+func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *DomainsClaims) error {
+	u := server.config.APIBaseURI.ResolveReference(&url.URL{
+		Path: "/v0/smtpst/session/" + domainsClaims.sessionID,
+	})
+
+	request, _ := http.NewRequestWithContext(ctx, http.MethodPatch, u.String(), nil)
+	request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
+
+	server.logger.Debugln("xxx refreshing token")
+	response, requestErr := server.httpClient.Do(request)
+	if requestErr != nil {
+		return fmt.Errorf("failed refresh token: %w", requestErr)
+	}
+
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("failed to refresh token with unexpected status: %d", response.StatusCode)
+	}
+	server.logger.Debugln("refresh triggered")
+
+	return nil
 }

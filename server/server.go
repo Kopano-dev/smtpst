@@ -108,6 +108,19 @@ func (server *Server) Serve(ctx context.Context) error {
 				default:
 					logger.WithField("event", currentEvent.Event).Warnln("unknown event type")
 				}
+
+			case <-time.After(time.Minute):
+
+			}
+
+			if domainsClaims.expiration.Before(time.Now().Add(-15 * time.Minute)) {
+				if refreshErr := server.refreshDomainsToken(serveCtx, domainsClaims); refreshErr != nil {
+					logger.WithError(refreshErr).Warnln("failed to refresh token")
+
+					if domainsClaims.expiration.Before(time.Now()) {
+						errCh <- fmt.Errorf("token expired: %w", refreshErr)
+					}
+				}
 			}
 		}
 	}()
