@@ -57,13 +57,15 @@ func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *Do
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPatch, u.String(), nil)
 	request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
 
-	server.logger.Debugln("xxx refreshing token")
+	server.logger.Debugln("refreshing token")
 	response, requestErr := server.httpClient.Do(request)
 	if requestErr != nil {
 		return fmt.Errorf("failed refresh token: %w", requestErr)
 	}
 
-	if response.StatusCode != http.StatusNoContent {
+	if response.StatusCode == http.StatusNotModified {
+		server.logger.Debugln("tried to refresh token too early")
+	} else if response.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("failed to refresh token with unexpected status: %d", response.StatusCode)
 	}
 	server.logger.Debugln("refresh triggered")
