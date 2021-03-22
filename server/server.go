@@ -115,7 +115,7 @@ func (server *Server) Serve(ctx context.Context) error {
 
 			}
 
-			if domainsClaims.expiration.Before(time.Now().Add(-15 * time.Minute)) {
+			if domainsClaims.expiration.Add(-15 * time.Minute).Before(time.Now()) {
 				if refreshErr := server.refreshDomainsToken(serveCtx, domainsClaims); refreshErr != nil {
 					logger.WithError(refreshErr).Warnln("failed to refresh token")
 
