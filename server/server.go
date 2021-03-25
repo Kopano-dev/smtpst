@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/jpillora/backoff"
 	"github.com/sirupsen/logrus"
+	"stash.kopano.io/kgol/smtpst/server/smtp/dagent"
 )
 
 // Server is our HTTP server implementation.
@@ -28,7 +30,10 @@ type Server struct {
 
 	logger logrus.FieldLogger
 
+	domainsClaims *DomainsClaims
+
 	httpClient *http.Client
+	DAgent     *dagent.DAgent
 }
 
 // NewServer constructs a server from the provided parameters.
@@ -73,6 +78,38 @@ func (server *Server) Serve(ctx context.Context) error {
 		close(readyCh)
 	}()
 
+	dagentListener, listenErr := net.Listen("tcp", server.config.DAgentListenAddress)
+	if listenErr != nil {
+		return fmt.Errorf("failed to create dagent listener: %w", listenErr)
+	}
+
+	dagentConfig := &dagent.Config{
+		Logger: logger,
+		Router: server,
+		LMTP:   false, // TODO(joao): Do we want to expose it in configuration?
+
+		// TODO(joao): Expose in configuration.
+		ReadTimeout:  10000 * time.Second,
+		WriteTimeout: 10000 * time.Second,
+
+		MaxMessageBytes: 32 * 1024 * 1024,
+		MaxRecipients:   100,
+	}
+	server.DAgent, err = dagent.New(dagentConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create dagent server: %w", err)
+	}
+
+	// Start DAgent
+	go func() {
+		logger.WithField("listen_addr", dagentListener.Addr()).Infoln("dagent listener started")
+		serveErr := server.DAgent.Serve(dagentListener)
+		if serveErr != nil {
+			errCh <- serveErr
+		}
+	}()
+
+	// Listen to events
 	eventCh := make(chan *TextEvent, 128)
 	go func() {
 		var domainsClaims *DomainsClaims
@@ -127,6 +164,7 @@ func (server *Server) Serve(ctx context.Context) error {
 		}
 	}()
 
+	// Start connection to smtps-provider
 	go func() {
 		defer close(exitCh)
 
@@ -138,8 +176,6 @@ func (server *Server) Serve(ctx context.Context) error {
 			params.Add("domain", domain)
 		}
 		u.RawQuery = params.Encode()
-
-		var domainsClaims *DomainsClaims
 
 		connector := func() error {
 			logger.Debugln("connecting session")
@@ -161,10 +197,10 @@ func (server *Server) Serve(ctx context.Context) error {
 			case http.StatusOK:
 				// All good.
 			case http.StatusNotAcceptable:
-				if domainsClaims != nil {
+				if server.domainsClaims != nil {
 					// Throw away current session data as server demed them not acceptable.
-					domainsClaims = nil
-					logger.WithField("session_id", domainsClaims.sessionID).Warnln("failed to resume smtpst session, clearing session data")
+					server.domainsClaims = nil
+					logger.WithField("session_id", server.domainsClaims.sessionID).Warnln("failed to resume smtpst session, clearing session data")
 					return fmt.Errorf("failed to create smtpst session with not acceptable response: %d", response.StatusCode)
 				}
 				fallthrough
@@ -181,8 +217,8 @@ func (server *Server) Serve(ctx context.Context) error {
 					select {
 					case <-stopCh:
 						return
-					case domainsClaims = <-authCh:
-						logger.WithField("session_id", domainsClaims.sessionID).Debugln("session data updated")
+					case server.domainsClaims = <-authCh:
+						logger.WithField("session_id", server.domainsClaims.sessionID).Debugln("session data updated")
 					}
 				}
 			}()
@@ -241,14 +277,14 @@ func (server *Server) Serve(ctx context.Context) error {
 			case <-time.After(bo.Duration()):
 			}
 
-			if domainsClaims != nil {
-				logger.WithField("session_id", domainsClaims.sessionID).Debugln("reusing existing session")
+			if server.domainsClaims != nil {
+				logger.WithField("session_id", server.domainsClaims.sessionID).Debugln("reusing existing session")
 				params.Del("domains")
-				for _, domain := range domainsClaims.Domains {
+				for _, domain := range server.domainsClaims.Domains {
 					params.Add("domain", domain)
 				}
-				params.Set("sid", domainsClaims.sessionID)
-				params.Set("domain_token_hint", domainsClaims.raw)
+				params.Set("sid", server.domainsClaims.sessionID)
+				params.Set("domain_token_hint", server.domainsClaims.raw)
 				u.RawQuery = params.Encode()
 			}
 		}
@@ -279,6 +315,15 @@ func (server *Server) Serve(ctx context.Context) error {
 	// Shutdown, server will stop to accept new connections, requires Go 1.8+.
 	logger.Infoln("clean server shutdown start")
 
+	shutdownCtx, shutdownCtxCancel := context.WithTimeout(ctx, 10*time.Second)
+	go func() {
+		if shutdownErr := server.DAgent.Shutdown(shutdownCtx); shutdownErr != nil {
+			logger.WithError(shutdownErr).Warn("clean dagent shutdown failed")
+		} else {
+			logger.Info("clean dagent shutdown complete")
+		}
+	}()
+
 	// Cancel our own context,
 	serveCtxCancel()
 	func() {
@@ -299,6 +344,8 @@ func (server *Server) Serve(ctx context.Context) error {
 			}
 		}
 	}()
+
+	shutdownCtxCancel() // Prevents leak.
 
 	return err
 }

@@ -73,3 +73,17 @@ func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *Do
 
 	return nil
 }
+
+func (server *Server) getDomainsClaims(domain string) (*DomainsClaims, bool) {
+	var domainsClaims *DomainsClaims
+	valid := false
+	for _, domain := range server.domainsClaims.Domains {
+		if domain == domain {
+			valid = true
+			domainsClaims = server.domainsClaims
+			break
+		}
+	}
+
+	return domainsClaims, valid
+}

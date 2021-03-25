@@ -20,4 +20,6 @@ type Config struct {
 	APIBaseURI *url.URL
 
 	Domains []string
+
+	DAgentListenAddress string
 }
