@@ -18,11 +18,12 @@ import (
 )
 
 var (
-	defaultLogTimestamp  = true
-	defaultLogLevel      = "info"
-	defaultSystemdNotify = false
-	defaultProviderURL   = ""
-	defaultDomains       = []string{}
+	defaultLogTimestamp        = true
+	defaultLogLevel            = "info"
+	defaultSystemdNotify       = false
+	defaultProviderURL         = ""
+	defaultDomains             = []string{}
+	defaultDAgentListenAddress = "127.0.0.1:10025"
 )
 
 func commandServe() *cobra.Command {
@@ -42,6 +43,7 @@ func commandServe() *cobra.Command {
 	serveCmd.Flags().BoolVar(&defaultSystemdNotify, "systemd-notify", defaultSystemdNotify, "Enable systemd sd_notify callback")
 	serveCmd.Flags().StringVar(&defaultProviderURL, "provider-url", defaultProviderURL, "URL to the SMTP secure transport provider API")
 	serveCmd.Flags().StringArrayVar(&defaultDomains, "domain", defaultDomains, "Domain to receive for")
+	serveCmd.Flags().StringVar(&defaultDAgentListenAddress, "dagent-listen", defaultDAgentListenAddress, "TCP listen address for SMTP delivery agent")
 
 	return serveCmd
 }
@@ -80,6 +82,8 @@ func serve(cmd *cobra.Command, args []string) error {
 		APIBaseURI: apiBaseURL,
 
 		Domains: defaultDomains,
+
+		DAgentListenAddress: defaultDAgentListenAddress,
 	}
 
 	srv, err := server.NewServer(cfg)
