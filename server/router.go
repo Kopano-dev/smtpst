@@ -20,7 +20,13 @@ import (
 
 	"github.com/emersion/go-smtp"
 	"github.com/sirupsen/logrus"
+
 	"stash.kopano.io/kgol/smtpst/server/smtp/dagent"
+)
+
+var (
+	errRouteDomainUnknown = errors.New("unknown domain in route")
+	errRouteExpired       = errors.New("route is expired")
 )
 
 func (server *Server) Mail(from string, opts smtp.MailOptions) error {
@@ -35,11 +41,7 @@ func (server *Server) GetRoute(domain string) (dagent.Route, error) {
 	}, nil
 }
 
-var (
-	errRouteDomainUnknown = errors.New("unknown domain in route")
-	errRouteExpired       = errors.New("route is expired")
-)
-
+// handleReceiveRoute Handles a new route sent by the server, requests the data and sends the received e-mail to the local smtp server.
 func (server *Server) handleReceiveRoute(ctx context.Context, domainsClaims *DomainsClaims, route *RouteMeta) error {
 	valid := false
 	for _, domain := range domainsClaims.Domains {
@@ -93,7 +95,7 @@ func (server *Server) handleReceiveRoute(ctx context.Context, domainsClaims *Dom
 			rcptTo = []string{devRcptTo}
 			logger.WithField("rcpt_to", rcptTo).Warnln("dev route for all mail in effect")
 		}
-		err := server.sendMail("127.0.0.1:25", from, rcptTo, response.Body)
+		err := server.sendMail("127.0.0.1:25", from, rcptTo, response.Body) // TODO(joao): expose this in configuration
 		if err != nil {
 			smtpLogger.WithError(err).Warnln("failed to route receive via smtp")
 		} else {
@@ -147,6 +149,7 @@ func (server *Server) handleReceiveRoute(ctx context.Context, domainsClaims *Dom
 	return nil
 }
 
+// sendMail connects to an smtp server and delivers an email to it.
 func (server *Server) sendMail(addr, from string, to []string, r io.Reader) error {
 	c, err := smtp.Dial(addr)
 	if err != nil {
@@ -176,9 +179,10 @@ func (server *Server) sendMail(addr, from string, to []string, r io.Reader) erro
 	return c.Quit()
 }
 
-func (server *Server) handleRequestSend(ctx context.Context, reader io.Reader, mail *RouteMail) error {
+// routeMail Routes an email through the smtpst-provider to be delivered to its destination.
+func (server *Server) routeMail(ctx context.Context, reader io.Reader, from string, rcptTo []string, size int, utf8 bool, body smtp.BodyType) error {
 	logger := server.logger
-	domainsClaims := server.domainsClaims
+	domainsClaims := server.getDomainsClaims()
 
 	sendUrl := server.config.APIBaseURI.ResolveReference(&url.URL{
 		Path: "/v0/smtpst/session/" + domainsClaims.sessionID + "/send",
@@ -189,16 +193,16 @@ func (server *Server) handleRequestSend(ctx context.Context, reader io.Reader, m
 		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, sendUrl.String(), reader)
 		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
 		request.Header.Set("Content-Type", "text/x-smtpst-routed-smtp")
-		request.Header.Set("X-Smtpst-From", mail.from)
-		for _, rcptTo := range mail.rcptTo {
+		request.Header.Set("X-Smtpst-From", from)
+		for _, rcptTo := range rcptTo {
 			request.Header.Add("X-Smtpst-Rcptto", rcptTo)
 		}
-		if mail.utf8 {
+		if utf8 {
 			request.Header.Set("X-Smtpst-Utf8", "1")
 		}
-		request.Header.Set("X-Smtpst-Body", string(mail.body))
-		if mail.size > 0 {
-			request.Header.Set("Content-Length", strconv.Itoa(mail.size))
+		request.Header.Set("X-Smtpst-Body", string(body))
+		if size > 0 {
+			request.Header.Set("Content-Length", strconv.Itoa(size))
 		}
 
 		response, requestErr := server.httpClient.Do(request)

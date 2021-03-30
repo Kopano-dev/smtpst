@@ -21,15 +21,11 @@ type Route struct {
 
 	server *Server
 
-	mail *RouteMail
-}
-
-type RouteMail struct {
 	from   string
-	body   smtp.BodyType
+	rcptTo []string
 	size   int
 	utf8   bool
-	rcptTo []string
+	body   smtp.BodyType
 }
 
 type RouteMeta struct {
@@ -47,26 +43,18 @@ type RouteStatus struct {
 }
 
 func (route *Route) Mail(ctx context.Context, from string, opts smtp.MailOptions) error {
-	if route.mail == nil {
-		route.mail = &RouteMail{}
-	}
-
-	route.mail.from = from
-	route.mail.body = opts.Body
-	route.mail.size = opts.Size
-	route.mail.utf8 = opts.UTF8
+	route.from = from
+	route.body = opts.Body
+	route.size = opts.Size
+	route.utf8 = opts.UTF8
 	return nil
 }
 
 func (route *Route) Rcpt(ctx context.Context, rcptTo string) error {
-	if route.mail == nil {
-		route.mail = &RouteMail{}
-	}
-
-	route.mail.rcptTo = append(route.mail.rcptTo, rcptTo)
+	route.rcptTo = append(route.rcptTo, rcptTo)
 	return nil
 }
 
 func (route *Route) Data(ctx context.Context, reader io.Reader) error {
-	return route.server.handleRequestSend(ctx, reader, route.mail)
+	return route.server.routeMail(ctx, reader, route.from, route.rcptTo, route.size, route.utf8, route.body)
 }

@@ -23,6 +23,7 @@ type DomainsClaims struct {
 	sessionID  string
 }
 
+// parseDomainsToken parses a raw string into the DomainsClaims struct.
 func (server *Server) parseDomainsToken(raw string) (*DomainsClaims, error) {
 	token, err := jwt.ParseSigned(raw)
 	if err != nil {
@@ -49,6 +50,8 @@ func (server *Server) parseDomainsToken(raw string) (*DomainsClaims, error) {
 	return domainsClaims, nil
 }
 
+// refreshDomainsToken issues a request for a new token to be sent.
+// Does not actually process the new token. Non blocking.
 func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *DomainsClaims) error {
 	u := server.config.APIBaseURI.ResolveReference(&url.URL{
 		Path: "/v0/smtpst/session/" + domainsClaims.sessionID,
@@ -74,16 +77,21 @@ func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *Do
 	return nil
 }
 
-func (server *Server) getDomainsClaims(domain string) (*DomainsClaims, bool) {
-	var domainsClaims *DomainsClaims
-	valid := false
-	for _, domain := range server.domainsClaims.Domains {
-		if domain == domain {
-			valid = true
-			domainsClaims = server.domainsClaims
-			break
-		}
-	}
+// getDomainsClaims locks for reading and returns the domains claims
+func (server *Server) getDomainsClaims() *DomainsClaims {
+	server.domainsClaimsMutex.RLock()
+	defer server.domainsClaimsMutex.RUnlock()
+	return server.domainsClaims
+}
 
-	return domainsClaims, valid
+// replaceDomainsClaims locks for writting and replaces the domains claims only
+// if the value provided is different. The old value will be return as well as
+// a boolean informing if the operation took place.
+func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*DomainsClaims, bool) {
+	server.domainsClaimsMutex.Lock()
+	defer server.domainsClaimsMutex.Unlock()
+	oldDomainsClaims := server.domainsClaims
+	replaced := oldDomainsClaims != domainsClaims
+	server.domainsClaims = domainsClaims
+	return oldDomainsClaims, replaced
 }
