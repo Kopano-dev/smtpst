@@ -22,4 +22,6 @@ type Config struct {
 	Domains []string
 
 	DAgentListenAddress string
+
+	SMTPLocalAddr string
 }

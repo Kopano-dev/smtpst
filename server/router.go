@@ -95,7 +95,7 @@ func (server *Server) handleReceiveRoute(ctx context.Context, domainsClaims *Dom
 			rcptTo = []string{devRcptTo}
 			logger.WithField("rcpt_to", rcptTo).Warnln("dev route for all mail in effect")
 		}
-		err := server.sendMail("127.0.0.1:25", from, rcptTo, response.Body) // TODO(joao): expose this in configuration
+		err := server.sendMail(server.config.SMTPLocalAddr, from, rcptTo, response.Body)
 		if err != nil {
 			smtpLogger.WithError(err).Warnln("failed to route receive via smtp")
 		} else {
