@@ -15,7 +15,7 @@ import (
 	"github.com/emersion/go-smtp"
 	"github.com/sirupsen/logrus"
 
-	"stash.kopano.io/kgol/smtpst/internal/utils"
+	"stash.kopano.io/kgol/smtpst/utils"
 )
 
 type Session struct {

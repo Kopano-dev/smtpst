@@ -15,7 +15,7 @@ import (
 	cmap "github.com/orcaman/concurrent-map"
 	"github.com/sirupsen/logrus"
 
-	"stash.kopano.io/kgol/smtpst/internal/utils"
+	"stash.kopano.io/kgol/smtpst/utils"
 )
 
 type DAgent struct {
