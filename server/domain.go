@@ -8,11 +8,19 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/square/go-jose.v2/jwt"
+)
+
+const (
+	domainsTokenStoreFn    = "domains.token"
+	domainsTokenStoreFnTmp = ".domains.token.tmp"
 )
 
 type DomainsClaims struct {
@@ -84,14 +92,58 @@ func (server *Server) getDomainsClaims() *DomainsClaims {
 	return server.domainsClaims
 }
 
+func (server *Server) loadDomainsClaims() (*DomainsClaims, error) {
+	server.domainsClaimsMutex.Lock()
+	defer server.domainsClaimsMutex.Unlock()
+
+	f, err := os.Open(filepath.Join(server.config.StatePath, domainsTokenStoreFn))
+	if err != nil {
+		return nil, err
+	}
+
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+
+	domainsClaims, err := server.parseDomainsToken(string(raw))
+	if err != nil {
+		return nil, err
+	}
+
+	server.domainsClaims = domainsClaims
+	return domainsClaims, nil
+}
+
 // replaceDomainsClaims locks for writting and replaces the domains claims only
 // if the value provided is different. The old value will be return as well as
 // a boolean informing if the operation took place.
-func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*DomainsClaims, bool) {
+func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*DomainsClaims, bool, error) {
 	server.domainsClaimsMutex.Lock()
 	defer server.domainsClaimsMutex.Unlock()
 	oldDomainsClaims := server.domainsClaims
 	replaced := oldDomainsClaims != domainsClaims
 	server.domainsClaims = domainsClaims
-	return oldDomainsClaims, replaced
+
+	err := func() error {
+		fn := filepath.Join(server.config.StatePath, domainsTokenStoreFnTmp)
+
+		f, createErr := os.Create(fn)
+		if createErr != nil {
+			return createErr
+		}
+		_, writeErr := f.WriteString(domainsClaims.raw)
+		if writeErr != nil {
+			return writeErr
+		}
+		f.Close()
+		renameErr := os.Rename(fn, filepath.Join(server.config.StatePath, domainsTokenStoreFn))
+		if renameErr != nil {
+			os.Remove(fn)
+			return renameErr
+		}
+		return nil
+	}()
+
+	return oldDomainsClaims, replaced, err
 }

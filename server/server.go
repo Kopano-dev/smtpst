@@ -52,6 +52,17 @@ func NewServer(c *Config) (*Server, error) {
 		eventCh: make(chan *TextEvent, 128),
 	}
 
+	domainsClaims, err := s.loadDomainsClaims()
+	if err != nil && !os.IsNotExist(err) {
+		s.logger.WithError(err).Warnln("unable to load domains claims from file")
+	} else if domainsClaims != nil {
+		s.logger.WithFields(logrus.Fields{
+			"domains":    domainsClaims.Domains,
+			"exp":        domainsClaims.expiration,
+			"session_id": domainsClaims.sessionID,
+		}).Infoln("loaded domains claims from file")
+	}
+
 	dagentConfig := &dagent.Config{
 		Logger: s.logger,
 		Router: s,
@@ -65,7 +76,6 @@ func NewServer(c *Config) (*Server, error) {
 		MaxRecipients:   100,
 	}
 
-	var err error
 	s.DAgent, err = dagent.New(dagentConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dagent server: %w", err)
@@ -277,23 +287,34 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 func (server *Server) startSMTPSTSession(ctx context.Context) error {
 	logger := server.logger
 
-	sessionURL := server.config.APIBaseURI.ResolveReference(&url.URL{
-		Path: "/v0/smtpst/session",
-	})
-	params := &url.Values{}
-	for _, domain := range server.config.Domains {
-		params.Add("domain", domain)
-	}
-	sessionURL.RawQuery = params.Encode()
-
 	bo := &backoff.Backoff{
 		Min:    1 * time.Second,
 		Max:    60 * time.Second,
 		Factor: 3,
 		Jitter: true,
 	}
-
+	sessionURL := server.config.APIBaseURI.ResolveReference(&url.URL{
+		Path: "/v0/smtpst/session",
+	})
+	updater := func() {
+		params := url.Values{}
+		if domainsClaims := server.getDomainsClaims(); domainsClaims == nil {
+			for _, domain := range server.config.Domains {
+				params.Add("domain", domain)
+			}
+		} else {
+			logger.WithField("session_id", domainsClaims.sessionID).Debugln("reusing existing session")
+			for _, domain := range domainsClaims.Domains {
+				params.Add("domain", domain)
+			}
+			params.Set("sid", domainsClaims.sessionID)
+			params.Set("domain_token_hint", domainsClaims.raw)
+		}
+		sessionURL.RawQuery = params.Encode()
+	}
 	for {
+		updater()
+
 		connErr := server.receiveFromSMTPSTSession(ctx, sessionURL)
 		if connErr != nil {
 			logger.WithError(connErr).Errorln("session connection error")
@@ -305,18 +326,6 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(bo.Duration()):
-		}
-
-		domainsClaims := server.getDomainsClaims()
-		if domainsClaims != nil {
-			logger.WithField("session_id", domainsClaims.sessionID).Debugln("reusing existing session")
-			params.Del("domains")
-			for _, domain := range domainsClaims.Domains {
-				params.Add("domain", domain)
-			}
-			params.Set("sid", domainsClaims.sessionID)
-			params.Set("domain_token_hint", domainsClaims.raw)
-			sessionURL.RawQuery = params.Encode()
 		}
 	}
 }
@@ -349,7 +358,10 @@ func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL) 
 		// All good.
 	case http.StatusNotAcceptable:
 		// Throw away current session data as connection demed them not acceptable.
-		if domainsClaims, replaced := server.replaceDomainsClaims(nil); replaced {
+		domainsClaims, replaced, err := server.replaceDomainsClaims(nil)
+		if err != nil {
+			return fmt.Errorf("failed to replace domains claims: %w", err)
+		} else if replaced {
 			logger.WithField("session_id", domainsClaims.sessionID).Warnln("failed to resume smtpst session, clearing session data")
 			return fmt.Errorf("failed to create smtpst session with not acceptable response: %d", response.StatusCode)
 		}

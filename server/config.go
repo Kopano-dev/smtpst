@@ -24,4 +24,6 @@ type Config struct {
 	DAgentListenAddress string
 
 	SMTPLocalAddr string
+
+	StatePath string
 }

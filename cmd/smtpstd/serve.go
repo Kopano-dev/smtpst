@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	systemDaemon "github.com/coreos/go-systemd/v22/daemon"
 	"github.com/spf13/cobra"
@@ -25,6 +26,7 @@ var (
 	defaultDomains          = []string{}
 	defaultDAgentListenAddr = "127.0.0.1:10025"
 	defaultSMTPLocalAddr    = "127.0.0.1:25"
+	defaultStatePath        = ""
 )
 
 func commandServe() *cobra.Command {
@@ -39,6 +41,8 @@ func commandServe() *cobra.Command {
 		},
 	}
 
+	cwd, _ := os.Getwd()
+
 	serveCmd.Flags().BoolVar(&defaultLogTimestamp, "log-timestamp", defaultLogTimestamp, "Prefix each log line with timestamp")
 	serveCmd.Flags().StringVar(&defaultLogLevel, "log-level", defaultLogLevel, "Log level (one of panic, fatal, error, warn, info or debug)")
 	serveCmd.Flags().BoolVar(&defaultSystemdNotify, "systemd-notify", defaultSystemdNotify, "Enable systemd sd_notify callback")
@@ -46,6 +50,7 @@ func commandServe() *cobra.Command {
 	serveCmd.Flags().StringArrayVar(&defaultDomains, "domain", defaultDomains, "Domain to receive for")
 	serveCmd.Flags().StringVar(&defaultDAgentListenAddr, "dagent-listen", defaultDAgentListenAddr, "TCP listen address for SMTP delivery agent")
 	serveCmd.Flags().StringVar(&defaultSMTPLocalAddr, "smtp-local", defaultSMTPLocalAddr, "TCP address for local SMTP")
+	serveCmd.Flags().StringVar(&defaultStatePath, "state-path", cwd, "Full path to writable state directory")
 
 	return serveCmd
 }
@@ -68,6 +73,13 @@ func serve(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("provider-url must not be empty")
 	}
 
+	if defaultStatePath == "" {
+		return fmt.Errorf("state-path must not be empty")
+	}
+	if info, statErr := os.Stat(defaultStatePath); statErr != nil || !info.IsDir() {
+		return fmt.Errorf("state-path error or not a directory: %w", statErr)
+	}
+
 	cfg := &server.Config{
 		Logger: logger,
 
@@ -88,6 +100,11 @@ func serve(cmd *cobra.Command, args []string) error {
 		DAgentListenAddress: defaultDAgentListenAddr,
 
 		SMTPLocalAddr: defaultSMTPLocalAddr,
+	}
+
+	cfg.StatePath, err = filepath.Abs(defaultStatePath)
+	if err != nil {
+		return fmt.Errorf("state-path invalid: %w", err)
 	}
 
 	srv, err := server.NewServer(cfg)
