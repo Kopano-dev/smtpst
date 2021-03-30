@@ -47,7 +47,7 @@ func (server *Server) parseDomainsToken(raw string) (*DomainsClaims, error) {
 	if err := claims.ValidateWithLeeway(jwt.Expected{
 		Time: time.Now(),
 	}, 5*time.Minute); err != nil {
-		return nil, err
+		return domainsClaims, err
 	}
 
 	// Copy over standard claims.
@@ -96,7 +96,8 @@ func (server *Server) loadDomainsClaims() (*DomainsClaims, error) {
 	server.domainsClaimsMutex.Lock()
 	defer server.domainsClaimsMutex.Unlock()
 
-	f, err := os.Open(filepath.Join(server.config.StatePath, domainsTokenStoreFn))
+	fn := filepath.Join(server.config.StatePath, domainsTokenStoreFn)
+	f, err := os.Open(fn)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +109,20 @@ func (server *Server) loadDomainsClaims() (*DomainsClaims, error) {
 
 	domainsClaims, err := server.parseDomainsToken(string(raw))
 	if err != nil {
-		return nil, err
+		return domainsClaims, err
+	}
+
+	for _, domain := range server.config.Domains {
+		ok := false
+		for _, d := range domainsClaims.Domains {
+			if d == domain {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("domains claims state mismatch, %s configured but missing in state - delete %s if that is intentional", domain, fn)
+		}
 	}
 
 	server.domainsClaims = domainsClaims

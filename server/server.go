@@ -22,6 +22,7 @@ import (
 
 	"github.com/jpillora/backoff"
 	"github.com/sirupsen/logrus"
+	"gopkg.in/square/go-jose.v2/jwt"
 
 	"stash.kopano.io/kgol/smtpst/server/smtp/dagent"
 )
@@ -53,8 +54,19 @@ func NewServer(c *Config) (*Server, error) {
 	}
 
 	domainsClaims, err := s.loadDomainsClaims()
-	if err != nil && !os.IsNotExist(err) {
-		s.logger.WithError(err).Warnln("unable to load domains claims from file")
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err == jwt.ErrExpired {
+			if domainsClaims != nil {
+				s.logger.WithFields(logrus.Fields{
+					"domains":    domainsClaims.Domains,
+					"exp":        domainsClaims.expiration,
+					"session_id": domainsClaims.sessionID,
+				}).Warnln("stored domains claims are expired, ignored")
+			}
+		}
 	} else if domainsClaims != nil {
 		s.logger.WithFields(logrus.Fields{
 			"domains":    domainsClaims.Domains,
