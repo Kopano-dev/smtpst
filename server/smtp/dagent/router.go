@@ -20,5 +20,5 @@ type Router interface {
 type Route interface {
 	Mail(ctx context.Context, from string, opts smtp.MailOptions) error
 	Rcpt(ctx context.Context, rcptTo string) error
-	Data(ctx context.Context, w io.Reader) error
+	Data(ctx context.Context, r io.Reader) error
 }

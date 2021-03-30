@@ -15,8 +15,6 @@ import (
 )
 
 type Route struct {
-	domain string
-
 	logger logrus.FieldLogger
 
 	server *Server

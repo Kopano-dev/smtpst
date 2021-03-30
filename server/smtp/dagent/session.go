@@ -78,38 +78,32 @@ func (s *Session) Rcpt(rcptTo string) error {
 func (s *Session) Data(r io.Reader) error {
 	s.logger.Debugf("smpt mail data")
 
-	data, err := io.ReadAll(r)
-	if err != nil {
-		s.logger.WithError(err).Errorln("smtp data failed to read")
-		return ErrTransactionFailed
+	route, routeErr := s.router.GetRoute("")
+	if routeErr != nil {
+		s.logger.WithError(routeErr).Errorln("failed to get smtp route")
+	}
+	if route == nil {
+		s.logger.Warnln("no smtp route available")
+		return ErrServiceNotAvailable
 	}
 
-	for domain, rcptTos := range s.domains {
-		route, routeErr := s.router.GetRoute(domain)
-		if routeErr != nil {
-			s.logger.WithError(routeErr).Errorln("failed to get smtp route")
-		}
-		if route == nil {
-			s.logger.Warnln("no smtp route available")
-			return ErrServiceNotAvailable
-		}
+	if routeErr = route.Mail(s.ctx, s.from, *s.opts); routeErr != nil {
+		s.logger.WithError(routeErr).Errorln("smtp route error on mail")
+		return routeErr
+	}
 
-		if routeErr = route.Mail(s.ctx, s.from, *s.opts); routeErr != nil {
-			s.logger.WithError(routeErr).Errorln("smtp route error on mail")
-			return routeErr
-		}
-
+	for _, rcptTos := range s.domains {
 		for _, rcptTo := range rcptTos {
 			if routeErr = route.Rcpt(s.ctx, rcptTo); routeErr != nil {
 				s.logger.WithError(routeErr).Errorln("smtp route error on rcptTo")
 				return routeErr
 			}
 		}
+	}
 
-		if routeErr = route.Data(s.ctx, bytes.NewBuffer(data)); routeErr != nil {
-			s.logger.WithError(routeErr).Errorln("smtp data route error on data")
-			return routeErr
-		}
+	if routeErr = route.Data(s.ctx, r); routeErr != nil {
+		s.logger.WithError(routeErr).Errorln("smtp data route error on data")
+		return routeErr
 	}
 
 	s.logger.Debugln("smpt mail data done")

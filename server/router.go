@@ -35,7 +35,6 @@ func (server *Server) Mail(from string, opts smtp.MailOptions) error {
 
 func (server *Server) GetRoute(domain string) (dagent.Route, error) {
 	return &Route{
-		domain: domain,
 		logger: server.logger,
 		server: server,
 	}, nil
