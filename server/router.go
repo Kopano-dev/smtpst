@@ -71,7 +71,7 @@ func (server *Server) handleReceiveRoute(ctx context.Context, domainsClaims *Dom
 		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
 		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
 		logger.Debugln("route requesting receive")
-		response, requestErr := server.httpClient.Do(request)
+		response, requestErr := server.httpClient.Do(withUserAgent(request))
 		if requestErr != nil {
 			return fmt.Errorf("failed to request route receive: %w", requestErr)
 		}
@@ -127,7 +127,7 @@ func (server *Server) handleReceiveRoute(ctx context.Context, domainsClaims *Dom
 		request, _ := http.NewRequestWithContext(ctx, http.MethodPatch, u.String(), statusBuf)
 		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
 		logger.Debugln("route sending route receive status")
-		response, requestErr := server.httpClient.Do(request)
+		response, requestErr := server.httpClient.Do(withUserAgent(request))
 		if requestErr != nil {
 			return fmt.Errorf("failed to send route receive status: %w", requestErr)
 		}

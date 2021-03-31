@@ -69,7 +69,7 @@ func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *Do
 	request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
 
 	server.logger.Debugln("refreshing token")
-	response, requestErr := server.httpClient.Do(request)
+	response, requestErr := server.httpClient.Do(withUserAgent(request))
 	if requestErr != nil {
 		return fmt.Errorf("failed refresh token: %w", requestErr)
 	}

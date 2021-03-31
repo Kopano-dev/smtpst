@@ -88,7 +88,7 @@ func (route *Route) Data(ctx context.Context, reader io.Reader) error {
 			request.Header.Set("Content-Length", strconv.Itoa(route.size))
 		}
 
-		response, requestErr := httpClient.Do(request)
+		response, requestErr := httpClient.Do(withUserAgent(request))
 		if requestErr != nil {
 			return fmt.Errorf("failed to request send mail: %w", requestErr)
 		}

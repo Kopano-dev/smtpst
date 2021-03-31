@@ -356,7 +356,7 @@ func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL) 
 		request.SetBasicAuth("dev", secret)
 	}
 
-	response, requestErr := server.httpClient.Do(request)
+	response, requestErr := server.httpClient.Do(withUserAgent(request))
 	if requestErr != nil {
 		return fmt.Errorf("failed to create smtpst session: %w", requestErr)
 	}
