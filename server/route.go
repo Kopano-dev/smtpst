@@ -7,7 +7,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/emersion/go-smtp"
 	"github.com/sirupsen/logrus"
@@ -54,5 +58,50 @@ func (route *Route) Rcpt(ctx context.Context, rcptTo string) error {
 }
 
 func (route *Route) Data(ctx context.Context, reader io.Reader) error {
-	return route.server.routeMail(ctx, reader, route.from, route.rcptTo, route.size, route.utf8, route.body)
+	domainsClaims := route.server.getDomainsClaims()
+	httpClient := route.server.httpClient
+
+	sendURL := route.server.config.APIBaseURI.ResolveReference(&url.URL{
+		Path: "/v0/smtpst/session/" + domainsClaims.sessionID + "/send",
+	})
+
+	logger := route.logger.WithFields(logrus.Fields{
+		"session_id": domainsClaims.sessionID,
+		"from":       route.from,
+		"rcpt_to":    route.rcptTo,
+	})
+	logger.Debugln("route mail")
+
+	err := func() error {
+		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, sendURL.String(), reader)
+		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
+		request.Header.Set("Content-Type", "text/x-smtpst-routed-smtp")
+		request.Header.Set("X-Smtpst-From", route.from)
+		for _, rcptTo := range route.rcptTo {
+			request.Header.Add("X-Smtpst-Rcptto", rcptTo)
+		}
+		if route.utf8 {
+			request.Header.Set("X-Smtpst-Utf8", "1")
+		}
+		request.Header.Set("X-Smtpst-Body", string(route.body))
+		if route.size > 0 {
+			request.Header.Set("Content-Length", strconv.Itoa(route.size))
+		}
+
+		response, requestErr := httpClient.Do(request)
+		if requestErr != nil {
+			return fmt.Errorf("failed to request send mail: %w", requestErr)
+		}
+		defer response.Body.Close()
+
+		if response.StatusCode != http.StatusCreated {
+			return fmt.Errorf("failed to request send mail, unexpected response status: %d", response.StatusCode)
+		}
+
+		return nil
+	}()
+
+	logger.Debugln("route mail request done")
+
+	return err
 }

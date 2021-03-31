@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/emersion/go-smtp"
@@ -35,7 +34,9 @@ func (server *Server) Mail(from string, opts smtp.MailOptions) error {
 
 func (server *Server) GetRoute(domain string) (dagent.Route, error) {
 	return &Route{
-		logger: server.logger,
+		logger: server.logger.WithFields(logrus.Fields{
+			"scope": "dagent-session-route",
+		}),
 		server: server,
 	}, nil
 }
@@ -176,49 +177,4 @@ func (server *Server) sendMail(addr, from string, to []string, r io.Reader) erro
 		return err
 	}
 	return c.Quit()
-}
-
-// routeMail Routes an email through the smtpst-provider to be delivered to its destination.
-func (server *Server) routeMail(ctx context.Context, reader io.Reader, from string, rcptTo []string, size int, utf8 bool, body smtp.BodyType) error {
-	logger := server.logger
-	domainsClaims := server.getDomainsClaims()
-
-	sendUrl := server.config.APIBaseURI.ResolveReference(&url.URL{
-		Path: "/v0/smtpst/session/" + domainsClaims.sessionID + "/send",
-	})
-
-	logger.Debugln("sending mail request...")
-	err := func() error {
-		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, sendUrl.String(), reader)
-		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
-		request.Header.Set("Content-Type", "text/x-smtpst-routed-smtp")
-		request.Header.Set("X-Smtpst-From", from)
-		for _, rcptTo := range rcptTo {
-			request.Header.Add("X-Smtpst-Rcptto", rcptTo)
-		}
-		if utf8 {
-			request.Header.Set("X-Smtpst-Utf8", "1")
-		}
-		request.Header.Set("X-Smtpst-Body", string(body))
-		if size > 0 {
-			request.Header.Set("Content-Length", strconv.Itoa(size))
-		}
-
-		response, requestErr := server.httpClient.Do(request)
-		if requestErr != nil {
-			return fmt.Errorf("failed to request send mail: %w", requestErr)
-		}
-
-		defer response.Body.Close()
-
-		if response.StatusCode != http.StatusCreated {
-			return fmt.Errorf("failed to request send mail, unexpected response status: %d", response.StatusCode)
-		}
-
-		return nil
-	}()
-
-	logger.Debugln("sending mail request done")
-
-	return err
 }
