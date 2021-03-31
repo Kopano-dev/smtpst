@@ -55,9 +55,6 @@ func NewServer(c *Config) (*Server, error) {
 
 	domainsClaims, err := s.loadDomainsClaims()
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
 		if err == jwt.ErrExpired {
 			if domainsClaims != nil {
 				s.logger.WithFields(logrus.Fields{
@@ -66,6 +63,8 @@ func NewServer(c *Config) (*Server, error) {
 					"session_id": domainsClaims.sessionID,
 				}).Warnln("stored domains claims are expired, ignored")
 			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
 		}
 	} else if domainsClaims != nil {
 		s.logger.WithFields(logrus.Fields{
