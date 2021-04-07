@@ -92,6 +92,8 @@ func (server *Server) getDomainsClaims() *DomainsClaims {
 	return server.domainsClaims
 }
 
+// loadDomainsClaims loads domains claims from the filesystem. Returns error if
+// it fails to read the file or parse the token.
 func (server *Server) loadDomainsClaims() (*DomainsClaims, error) {
 	server.domainsClaimsMutex.Lock()
 	defer server.domainsClaimsMutex.Unlock()
@@ -130,8 +132,11 @@ func (server *Server) loadDomainsClaims() (*DomainsClaims, error) {
 }
 
 // replaceDomainsClaims locks for writting and replaces the domains claims only
-// if the value provided is different. The old value will be return as well as
-// a boolean informing if the operation took place.
+// if the value provided is different. Afterwards it attemps to write the data
+// to a file.
+// It returns the old value as well as a boolean stating if the replacement
+// actually took place. If an error occured with writing of the file this will
+// also be returned.
 func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*DomainsClaims, bool, error) {
 	server.domainsClaimsMutex.Lock()
 	defer server.domainsClaimsMutex.Unlock()
@@ -139,25 +144,29 @@ func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*Domai
 	replaced := oldDomainsClaims != domainsClaims
 	server.domainsClaims = domainsClaims
 
-	err := func() error {
-		fn := filepath.Join(server.config.StatePath, domainsTokenStoreFnTmp)
+	var err error
+	if domainsClaims != nil {
+		err = func() error {
+			fn := filepath.Join(server.config.StatePath, domainsTokenStoreFnTmp)
 
-		f, createErr := os.Create(fn)
-		if createErr != nil {
-			return createErr
-		}
-		_, writeErr := f.WriteString(domainsClaims.raw)
-		if writeErr != nil {
-			return writeErr
-		}
-		f.Close()
-		renameErr := os.Rename(fn, filepath.Join(server.config.StatePath, domainsTokenStoreFn))
-		if renameErr != nil {
-			os.Remove(fn)
-			return renameErr
-		}
-		return nil
-	}()
+			f, createErr := os.Create(fn)
+			if createErr != nil {
+				return createErr
+			}
+
+			_, writeErr := f.WriteString(domainsClaims.raw)
+			if writeErr != nil {
+				return writeErr
+			}
+			f.Close()
+			renameErr := os.Rename(fn, filepath.Join(server.config.StatePath, domainsTokenStoreFn))
+			if renameErr != nil {
+				os.Remove(fn)
+				return renameErr
+			}
+			return nil
+		}()
+	}
 
 	return oldDomainsClaims, replaced, err
 }
