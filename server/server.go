@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -48,9 +49,33 @@ func NewServer(c *Config) (*Server, error) {
 		config: c,
 		logger: c.Logger,
 
-		httpClient: &http.Client{},
-
 		eventCh: make(chan *TextEvent, 128),
+	}
+
+	certificate, err := s.loadCertificate()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load certificate: %w", err)
+	}
+
+	// TODO(joao): Make sure configuration is sane and expose what's needed (if
+	// any) to the configuration.
+	s.httpClient = &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          1,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			TLSClientConfig: &tls.Config{
+				Rand:         nil,
+				Certificates: []tls.Certificate{certificate},
+			},
+		},
 	}
 
 	domainsClaims, err := s.loadDomainsClaims()
