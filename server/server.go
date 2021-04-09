@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -530,7 +531,11 @@ session:
 		}
 
 		if connErr := server.receiveFromSMTPSTSession(currentSessionCtx, sessionURL, currentSessionClaims); connErr != nil {
-			logger.WithError(connErr).Errorln("session connection error")
+			if errors.Is(connErr, context.Canceled) {
+				logger.Infoln("session closed by client")
+			} else {
+				logger.WithError(connErr).Errorln("session connection error")
+			}
 		} else {
 			bo.Reset()
 		}
