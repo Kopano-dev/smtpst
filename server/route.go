@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/emersion/go-smtp"
 	"github.com/sirupsen/logrus"
@@ -58,20 +59,33 @@ func (route *Route) Rcpt(ctx context.Context, rcptTo string) error {
 }
 
 func (route *Route) Data(ctx context.Context, reader io.Reader) error {
+	logger := route.logger.WithFields(logrus.Fields{
+		"from":    route.from,
+		"rcpt_to": route.rcptTo,
+	})
+
 	domainsClaims := route.server.getDomainsClaims()
+	if domainsClaims == nil {
+		err := fmt.Errorf("no session claims")
+		logger.WithError(err).Debugln("route mail precondition failed")
+		return &smtp.SMTPError{
+			Code:         421,
+			EnhancedCode: smtp.EnhancedCodeNotSet,
+			Message:      fmt.Sprintf("Route mail precondition failed: %s", err.Error()),
+		}
+	}
+
 	httpClient := route.server.httpClient
 
 	sendURL := route.server.config.APIBaseURI.ResolveReference(&url.URL{
 		Path: "/v0/smtpst/session/" + domainsClaims.sessionID + "/send",
 	})
 
-	logger := route.logger.WithFields(logrus.Fields{
+	logger = route.logger.WithFields(logrus.Fields{
 		"session_id": domainsClaims.sessionID,
-		"from":       route.from,
-		"rcpt_to":    route.rcptTo,
 	})
-	logger.Debugln("route mail")
 
+	logger.Debugln("route mail")
 	err := func() error {
 		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, sendURL.String(), reader)
 		request.Header.Set("Authorization", "Bearer "+domainsClaims.raw)
@@ -94,14 +108,28 @@ func (route *Route) Data(ctx context.Context, reader io.Reader) error {
 		}
 		defer response.Body.Close()
 
-		if response.StatusCode != http.StatusCreated {
+		switch response.StatusCode {
+		case http.StatusCreated:
+			// All good.
+		case http.StatusBadRequest:
+			// Bad request is a client error, read body and include in message.
+			message, _ := io.ReadAll(io.LimitReader(response.Body, 256))
+			return fmt.Errorf("route mail request rejected: %s", strings.TrimSpace(string(message)))
+		default:
 			return fmt.Errorf("failed to request send mail, unexpected response status: %d", response.StatusCode)
 		}
 
 		return nil
 	}()
+	if err != nil {
+		logger.WithError(err).Debugln("route mail request failed")
+		return &smtp.SMTPError{
+			Code:         421,
+			EnhancedCode: smtp.EnhancedCodeNotSet,
+			Message:      fmt.Sprintf("Route mail request failed: %s", err.Error()),
+		}
+	}
 
 	logger.Debugln("route mail request done")
-
-	return err
+	return nil
 }

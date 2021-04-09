@@ -13,6 +13,8 @@ import (
 
 // Config bundles configuration settings.
 type Config struct {
+	Iss *url.URL
+
 	Logger logrus.FieldLogger
 
 	OnReady func(*Server)
@@ -26,4 +28,6 @@ type Config struct {
 	SMTPLocalAddr string
 
 	StatePath string
+
+	LicensesPath string
 }

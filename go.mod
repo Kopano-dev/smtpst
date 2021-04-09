@@ -11,4 +11,6 @@ require (
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v1.1.3
 	gopkg.in/square/go-jose.v2 v2.5.1
+	stash.kopano.io/kgol/ksurveyclient-go v0.6.1
+	stash.kopano.io/kgol/kustomer v0.5.0
 )

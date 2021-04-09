@@ -11,11 +11,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	systemDaemon "github.com/coreos/go-systemd/v22/daemon"
 	"github.com/spf13/cobra"
+	"stash.kopano.io/kgol/ksurveyclient-go/autosurvey"
 
 	"stash.kopano.io/kgol/smtpst/server"
+	"stash.kopano.io/kgol/smtpst/version"
 )
 
 var (
@@ -27,6 +30,8 @@ var (
 	defaultDAgentListenAddr = "127.0.0.1:10025"
 	defaultSMTPLocalAddr    = "127.0.0.1:25"
 	defaultStatePath        = ""
+	defaultLicensesPath     = "/etc/kopano/licenses"
+	defaultIss              = ""
 )
 
 func commandServe() *cobra.Command {
@@ -51,6 +56,8 @@ func commandServe() *cobra.Command {
 	serveCmd.Flags().StringVar(&defaultDAgentListenAddr, "dagent-listen", defaultDAgentListenAddr, "TCP listen address for SMTP delivery agent")
 	serveCmd.Flags().StringVar(&defaultSMTPLocalAddr, "smtp-local", defaultSMTPLocalAddr, "TCP address for local SMTP")
 	serveCmd.Flags().StringVar(&defaultStatePath, "state-path", cwd, "Full path to writable state directory")
+	serveCmd.Flags().StringVar(&defaultLicensesPath, "licenses-path", defaultLicensesPath, "Path to the folder containing Kopano license files")
+	serveCmd.Flags().StringVar(&defaultIss, "iss", defaultIss, "OIDC issuer URL")
 
 	return serveCmd
 }
@@ -80,7 +87,14 @@ func serve(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("state-path error or not a directory: %w", statErr)
 	}
 
+	issURL, err := url.Parse(defaultIss)
+	if err != nil {
+		return fmt.Errorf("invalid iss: %w", err)
+	}
+
 	cfg := &server.Config{
+		Iss: issURL,
+
 		Logger: logger,
 
 		OnReady: func(srv *server.Server) {
@@ -95,8 +109,6 @@ func serve(cmd *cobra.Command, args []string) error {
 
 		APIBaseURI: apiBaseURL,
 
-		Domains: defaultDomains,
-
 		DAgentListenAddress: defaultDAgentListenAddr,
 
 		SMTPLocalAddr: defaultSMTPLocalAddr,
@@ -107,9 +119,42 @@ func serve(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("state-path invalid: %w", err)
 	}
 
+	cfg.LicensesPath, err = filepath.Abs(defaultLicensesPath)
+	if err != nil {
+		return fmt.Errorf("licenses-path invalid: %w", err)
+	}
+
+	for _, domain := range defaultDomains {
+		domain = strings.TrimSpace(domain)
+		if domain != "" {
+			du, parseErr := url.Parse("http://" + domain)
+			if parseErr != nil {
+				return fmt.Errorf("invalid domain value: %s", domain)
+			}
+			if domain != du.Host {
+				return fmt.Errorf("domain value is not a domain: %s", domain)
+			}
+			cfg.Domains = append(cfg.Domains, domain)
+		}
+	}
+
 	srv, err := server.NewServer(cfg)
 	if err != nil {
 		return err
+	}
+
+	// Survey support.
+	var guid []byte
+	if cfg.Iss != nil && cfg.Iss.Hostname() != "localhost" {
+		guid = []byte(cfg.Iss.String())
+	}
+	err = autosurvey.Start(ctx,
+		"smtpstd",
+		version.Version,
+		guid,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to start auto survey: %v", err)
 	}
 
 	return srv.Serve(ctx)

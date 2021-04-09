@@ -24,12 +24,16 @@ import (
 	"github.com/jpillora/backoff"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/square/go-jose.v2/jwt"
+	"stash.kopano.io/kgol/kustomer"
+	"stash.kopano.io/kgol/kustomer/license"
 
 	"stash.kopano.io/kgol/smtpst/server/smtp/dagent"
 )
 
 // Server is our HTTP server implementation.
 type Server struct {
+	mutex sync.RWMutex
+
 	config *Config
 
 	logger logrus.FieldLogger
@@ -40,7 +44,11 @@ type Server struct {
 	httpClient *http.Client
 	DAgent     *dagent.DAgent
 
-	eventCh chan *TextEvent
+	readyCh  chan struct{}
+	updateCh chan struct{}
+	eventCh  chan *TextEvent
+
+	licenseClaims []*license.Claims
 }
 
 // NewServer constructs a server from the provided parameters.
@@ -49,7 +57,9 @@ func NewServer(c *Config) (*Server, error) {
 		config: c,
 		logger: c.Logger,
 
-		eventCh: make(chan *TextEvent, 128),
+		readyCh:  make(chan struct{}, 1),
+		updateCh: make(chan struct{}),
+		eventCh:  make(chan *TextEvent, 128),
 	}
 
 	certificate, err := s.loadCertificate()
@@ -128,7 +138,6 @@ func (server *Server) Serve(ctx context.Context) error {
 	errCh := make(chan error, 2)
 	exitCh := make(chan struct{}, 1)
 	signalCh := make(chan os.Signal, 1)
-	readyCh := make(chan struct{}, 1)
 	triggerCh := make(chan bool, 1)
 
 	serveCtx, serveCtxCancel := context.WithCancel(ctx)
@@ -140,7 +149,7 @@ func (server *Server) Serve(ctx context.Context) error {
 		select {
 		case <-serveCtx.Done():
 			return
-		case <-readyCh:
+		case <-server.readyCh:
 		}
 		logger.WithFields(logrus.Fields{}).Infoln("ready")
 	}()
@@ -166,9 +175,9 @@ func (server *Server) Serve(ctx context.Context) error {
 	// Parse incomming events
 	go func() {
 		defer serversWg.Done()
-		err := server.incomingEventsReadPump(serveCtx)
-		if err != nil {
-			errCh <- err
+		pumpErr := server.incomingEventsReadPump(serveCtx)
+		if pumpErr != nil {
+			errCh <- pumpErr
 		}
 	}()
 
@@ -176,9 +185,108 @@ func (server *Server) Serve(ctx context.Context) error {
 	// Start and maintain a connection with the smtpst-provider
 	go func() {
 		defer serversWg.Done()
-		err := server.startSMTPSTSession(serveCtx)
-		if err != nil {
-			errCh <- err
+		startErr := server.startSMTPSTSession(serveCtx)
+		if startErr != nil {
+			errCh <- startErr
+		}
+	}()
+
+	// Load license files directly.
+	// TODO(longsleep): Once available, maube retrieve license from kustomerd.
+	serversWg.Add(1)
+	go func() {
+		defer serversWg.Done()
+		loadHistory := make(map[string]*license.Claims)
+		activateHistory := make(map[string]*license.Claims)
+		var lastSub string
+		var first bool = true
+		f := func() error {
+			var sub string
+			var claims []*license.Claims
+			var changed bool
+			// Load and parse license files.
+			if server.config.LicensesPath != "" {
+				scanner := &kustomer.LicensesLoader{
+					Offline:         true, // We don't load any key set, so set always to offline.
+					Logger:          logger,
+					LoadHistory:     loadHistory,
+					ActivateHistory: activateHistory,
+					OnRemove: func(c *license.Claims) {
+						logger.WithField("id", c.LicenseID).Debugln("removed license, triggering")
+						changed = true
+					},
+					OnNew: func(c *license.Claims) {
+						logger.WithField("id", c.LicenseID).Debugln("found new license, triggering")
+						changed = true
+					},
+				}
+				var scanErr error
+				claims, scanErr = scanner.UnsafeScanFolderWithoutVerification(server.config.LicensesPath, jwt.Expected{
+					Time: time.Now(),
+				})
+				if scanErr != nil {
+					if first {
+						return fmt.Errorf("failed to scan for licenses: %w", scanErr)
+					}
+					logger.WithError(scanErr).Errorln("failed to scan for licenses")
+				}
+			}
+
+			// Find suitable claims.
+			var selectedClaims []*license.Claims
+			for _, c := range claims {
+				// TODO(longsleep): Add smtpst specific product.
+				if _, ok := c.Kopano.Products["groupware"]; ok {
+					selectedClaims = append(selectedClaims, c)
+				}
+			}
+
+			// Find sub.
+			if len(selectedClaims) > 0 {
+				sub = selectedClaims[0].Claims.Subject
+			}
+			if !first && sub == lastSub && !changed {
+				return nil
+			}
+			lastSub = sub
+
+			// Update active license claims.
+			server.mutex.Lock()
+			server.licenseClaims = selectedClaims
+			updateCh := server.updateCh
+			server.updateCh = make(chan struct{})
+			server.mutex.Unlock()
+
+			if first {
+				// Set ready.
+				close(server.readyCh)
+				first = false
+			}
+			close(updateCh)
+			return nil
+		}
+		select {
+		case <-serveCtx.Done():
+			return
+		default:
+			if triggerErr := f(); triggerErr != nil {
+				errCh <- triggerErr
+				return
+			}
+		}
+		for {
+			select {
+			case <-serveCtx.Done():
+				return
+			case <-triggerCh:
+				_ = f()
+			case <-time.After(60 * time.Second):
+				select {
+				case <-triggerCh:
+				default:
+				}
+				_ = f()
+			}
 		}
 	}()
 
@@ -187,11 +295,6 @@ func (server *Server) Serve(ctx context.Context) error {
 		serversWg.Wait()
 		logger.Infoln("clean smtpst-provider connection shutdown complete")
 		close(exitCh)
-	}()
-
-	// Set ready
-	go func() {
-		close(readyCh) // TODO(joao): Implement proper ready
 	}()
 
 	// Wait for error or signal, with support for HUP to reload
@@ -303,7 +406,7 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 
 		}
 
-		if domainsClaims.expiration.Add(-15 * time.Minute).Before(time.Now()) {
+		if domainsClaims != nil && domainsClaims.expiration.Add(-15*time.Minute).Before(time.Now()) {
 			if domainsClaims == server.getDomainsClaims() {
 				if refreshErr := server.refreshDomainsToken(ctx, domainsClaims); refreshErr != nil {
 					logger.WithError(refreshErr).Warnln("failed to refresh token")
@@ -329,14 +432,23 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 		Factor: 3,
 		Jitter: true,
 	}
+
 	sessionURL := server.config.APIBaseURI.ResolveReference(&url.URL{
 		Path: "/v0/smtpst/session",
 	})
-	updater := func() {
+
+	updater := func(currentLicenseClaims []*license.Claims) error {
+		allowDomains := server.getDevSecretFromEnv() != ""
+
 		params := url.Values{}
 		if domainsClaims := server.getDomainsClaims(); domainsClaims == nil {
 			for _, domain := range server.config.Domains {
 				params.Add("domain", domain)
+			}
+			if !allowDomains {
+				if domains := params["domain"]; len(domains) > 0 {
+					return fmt.Errorf("domains requested, but no suitable license available")
+				}
 			}
 		} else {
 			logger.WithField("session_id", domainsClaims.sessionID).Debugln("reusing existing session")
@@ -346,13 +458,78 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 			params.Set("sid", domainsClaims.sessionID)
 			params.Set("domain_token_hint", domainsClaims.raw)
 		}
-		sessionURL.RawQuery = params.Encode()
-	}
-	for {
-		updater()
 
-		connErr := server.receiveFromSMTPSTSession(ctx, sessionURL)
-		if connErr != nil {
+		sessionURL.RawQuery = params.Encode()
+		return nil
+	}
+
+	var sessionMutex sync.RWMutex
+	var sessionCtx context.Context
+	var sessionCtxCancel context.CancelFunc
+	var sessionClaims []*license.Claims
+	var sessionCh = make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-server.updateCh:
+			}
+
+			server.mutex.RLock()
+			currentLicenseClaims := server.licenseClaims
+			server.mutex.RUnlock()
+
+			sessionMutex.Lock()
+			currentsessionCtxCancel := sessionCtxCancel
+			currentSessionCh := sessionCh
+			sessionCh = make(chan struct{})
+			sessionCtx, sessionCtxCancel = context.WithCancel(ctx)
+			if len(currentLicenseClaims) > 0 {
+				sessionClaims = currentLicenseClaims
+			} else {
+				sessionClaims = make([]*license.Claims, 0)
+			}
+			sessionMutex.Unlock()
+			close(currentSessionCh)
+			if currentsessionCtxCancel != nil {
+				currentsessionCtxCancel()
+			}
+		}
+	}()
+
+	select {
+	case <-server.readyCh:
+	case <-ctx.Done():
+		return nil
+	}
+
+session:
+	for {
+		sessionMutex.RLock()
+		currentSessionCtx := sessionCtx
+		currentSessionClaims := sessionClaims
+		currentSessionCh := sessionCh
+		sessionMutex.RUnlock()
+		if currentSessionClaims == nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-currentSessionCh:
+				continue session
+			}
+		}
+
+		if updateErr := updater(currentSessionClaims); updateErr != nil {
+			logger.WithError(updateErr).Errorln("failed to configure session")
+			sessionMutex.Lock()
+			sessionClaims = nil
+			sessionCh = make(chan struct{})
+			sessionMutex.Unlock()
+			continue session
+		}
+
+		if connErr := server.receiveFromSMTPSTSession(currentSessionCtx, sessionURL, currentSessionClaims); connErr != nil {
 			logger.WithError(connErr).Errorln("session connection error")
 		} else {
 			bo.Reset()
@@ -370,15 +547,20 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 // for new events sent through the connection. The event data will be processed
 // and pushed to the server's event channel. Blocks forever until the connection
 // or the context is closed.
-func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL) error {
+func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, claims []*license.Claims) error {
 	logger := server.logger
 
 	logger.Debugln("connecting session")
 
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
-	secret := os.Getenv("SMTPST_SECRET_DEV")
+
+	secret := server.getDevSecretFromEnv()
 	if secret != "" {
+		logger.Warnln("authenticating session with dev secret")
 		request.SetBasicAuth("dev", secret)
+	} else if len(claims) > 0 {
+		logger.WithField("id", claims[0].LicenseID).Infoln("authenticating session with license claims")
+		request.Header.Set("Authorization", "Bearer "+string(claims[0].Raw))
 	}
 
 	response, requestErr := server.httpClient.Do(withUserAgent(request))
@@ -439,4 +621,8 @@ func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL) 
 			currentEvent.Event = string(bytes.TrimSpace(lineBytesParts[1]))
 		}
 	}
+}
+
+func (server *Server) getDevSecretFromEnv() string {
+	return os.Getenv("SMTPST_SECRET_DEV")
 }
