@@ -68,22 +68,19 @@ func NewServer(c *Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to load certificate: %w", err)
 	}
 
-	// TODO(joao): Make sure configuration is sane and expose what's needed (if
-	// any) to the configuration.
+	// TLS client configuration.
 	s.httpClient = &http.Client{
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
+				Timeout: 30 * time.Second,
 			}).DialContext,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          1,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:   true,
+			MaxIdleConns:        1,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 60 * time.Second,
 			TLSClientConfig: &tls.Config{
-				Rand:         nil,
+				MinVersion:   tls.VersionTLS13,
 				Certificates: []tls.Certificate{certificate},
 			},
 		},
@@ -116,9 +113,8 @@ func NewServer(c *Config) (*Server, error) {
 		LMTP:   false,
 
 		// TODO(joao): Expose in configuration.
-		ReadTimeout:  10 * time.Minute,
-		WriteTimeout: 10 * time.Minute,
-
+		ReadTimeout:     60 * time.Second,
+		WriteTimeout:    60 * time.Second,
 		MaxMessageBytes: 32 * 1024 * 1024,
 		MaxRecipients:   100,
 	}
