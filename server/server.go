@@ -231,10 +231,20 @@ func (server *Server) Serve(ctx context.Context) error {
 
 			// Find suitable claims.
 			var selectedClaims []*license.Claims
+			var groupwareFallback = true
 			for _, c := range claims {
 				// TODO(longsleep): Add smtpst specific product.
-				if _, ok := c.Kopano.Products["groupware"]; ok {
+				if _, ok := c.Kopano.Products["smtpst"]; ok {
+					if groupwareFallback {
+						selectedClaims = make([]*license.Claims, 0)
+						groupwareFallback = false
+					}
 					selectedClaims = append(selectedClaims, c)
+					continue
+				}
+				if _, ok := c.Kopano.Products["groupware"]; ok && groupwareFallback {
+					selectedClaims = append(selectedClaims, c)
+					continue
 				}
 			}
 
