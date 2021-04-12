@@ -446,6 +446,12 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 
 	updater := func(currentLicenseClaims []*license.Claims) error {
 		allowDomains := server.getDevSecretFromEnv() != ""
+		if !allowDomains && len(currentLicenseClaims) > 0 {
+			if _, ok := currentLicenseClaims[0].Kopano.Products["groupware"]; !ok {
+				// Not a groupware license, let's allow domains and let the provider decide.
+				allowDomains = true
+			}
+		}
 
 		params := url.Values{}
 		if domainsClaims := server.getDomainsClaims(); domainsClaims == nil {
@@ -558,7 +564,7 @@ session:
 // for new events sent through the connection. The event data will be processed
 // and pushed to the server's event channel. Blocks forever until the connection
 // or the context is closed.
-func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, claims []*license.Claims) error {
+func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, currentLicenseClaims []*license.Claims) error {
 	logger := server.logger
 
 	logger.Debugln("connecting session")
@@ -569,9 +575,12 @@ func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, 
 	if secret != "" {
 		logger.Warnln("authenticating session with dev secret")
 		request.SetBasicAuth("dev", secret)
-	} else if len(claims) > 0 {
-		logger.WithField("id", claims[0].LicenseID).Infoln("authenticating session with license claims")
-		request.Header.Set("Authorization", "Bearer "+string(claims[0].Raw))
+	} else if len(currentLicenseClaims) > 0 {
+		logger.WithField("id", currentLicenseClaims[0].LicenseID).Infoln("authenticating session with license claims")
+		request.Header.Set("Authorization", "Bearer "+string(currentLicenseClaims[0].Raw))
+		for _, clc := range currentLicenseClaims[1:] {
+			request.Header.Set("X-Smtpst-License", string(clc.Raw))
+		}
 	}
 
 	response, requestErr := server.httpClient.Do(withUserAgent(request))
