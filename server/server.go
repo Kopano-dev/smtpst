@@ -392,7 +392,14 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 					"domains":    newDomainsClaims.Domains,
 					"session_id": newDomainsClaims.sessionID,
 				}).Debugln("domains event received")
-				server.replaceDomainsClaims(domainsClaims)
+				if _, replaced, err := server.replaceDomainsClaims(domainsClaims); err != nil {
+					logger.WithError(err).Errorln("failed to set domains claims")
+				} else if replaced {
+					logger.WithFields(logrus.Fields{
+						"domains":    newDomainsClaims.Domains,
+						"session_id": newDomainsClaims.sessionID,
+					}).Infoln("domains updated")
+				}
 
 			case "receive":
 				var route RouteMeta
