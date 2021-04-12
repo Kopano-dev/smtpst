@@ -1,0 +1,112 @@
+#!/bin/sh
+#
+# Simple Mail Transfer Protocol Secure Transport Daemon (smtpstd) launcher
+#
+# License: AGPL-3.0-only
+# Copyright 2021 Kopano and its licensors
+#
+
+set -e
+
+# Base defines.
+
+EXE=/usr/libexec/kopano-smtpst/smtpstd
+DEFAULT_PROVIDER_URL=
+DEFAULT_LICENSES_PATH=/etc/kopano/licenses
+DEFAULT_DAGENT_LISTEN=127.0.0.1:10025
+DEFAULT_SMTP_LOCAL=127.0.0.1:25
+DEFAULT_STATE_PATH=/var/lib/kopano-smtpstd
+
+# Helper functions
+
+get_oidc_issuer_from_mailname() {
+	if [ -f /etc/mailname ]; then
+		local mailname=$(head -n 1 /etc/mailname | tr -d [:blank:])
+		oidc_issuer_identifier="https://$mailname"
+	fi
+}
+
+# Handle parameters for configuration.
+
+case "${1}" in
+	serve)
+		# Inject values from environment into command line. This is mainly used
+		# when this script is run from systemd or docker.
+
+		# smtpstd basics
+
+		if [ -n "$log_level" ]; then
+			set -- "$@" --log-level="$log_level"
+		fi
+
+		if [ -z "$oidc_issuer_identifier" ]; then
+			get_oidc_issuer_from_mailname
+		fi
+		if [ -n "$oidc_issuer_identifier" ]; then
+			set -- "$@" --iss="$oidc_issuer_identifier"
+		fi
+
+		if [ -z "$provider_url" ]; then
+			if [ -n "$DEFAULT_PROVIDER_URL" ]; then
+				provider_url=$DEFAULT_PROVIDER_URL
+			fi
+		fi
+		if [ -n "$provider_url" ]; then
+			set -- "$@" --provider-url="$provider_url"
+		fi
+
+		if [ -z "$licenses_path" ]; then
+			if [ -n "$DEFAULT_LICENSES_PATH" ]; then
+				licenses_path=$DEFAULT_LICENSES_PATH
+			fi
+		fi
+		if [ -n "$licenses_path" ]; then
+			set -- "$@" --licenses-path="$licenses_path"
+		fi
+
+		if [ -n "$domains" ]; then
+			for domain in $domains; do
+				set -- "$@" --domain="$domain"
+			done
+		fi
+
+		if [ -z "$dagent_listen" ]; then
+			if [ -n "$DEFAULT_DAGENT_LISTEN" ]; then
+				dagent_listen=$DEFAULT_DAGENT_LISTEN
+			fi
+		fi
+		if [ -n "$dagent_listen" ]; then
+			set -- "$@" --dagent-listen="$dagent_listen"
+		fi
+
+		if [ -z "$smtp_local" ]; then
+			if [ -n "$DEFAULT_SMTP_LOCAL" ]; then
+				smtp_local=$DEFAULT_SMTP_LOCAL
+			fi
+		fi
+		if [ -n "$smtp_local" ]; then
+			set -- "$@" --smtp-local="$smtp_local"
+		fi
+
+		if [ -z "$state_path" ]; then
+			if [ -n "$DEFAULT_STATE_PATH" ]; then
+				state_path=$DEFAULT_STATE_PATH
+			fi
+		fi
+		if [ -n "$state_path" ]; then
+			set -- "$@" --state-path="$state_path"
+		fi
+
+		;;
+
+	*)
+		;;
+esac
+
+# Set executable.
+
+set -- ${EXE} "$@"
+
+# Run.
+
+exec "$@"
