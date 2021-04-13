@@ -150,7 +150,7 @@ func (server *Server) Serve(ctx context.Context) error {
 			return
 		case <-server.readyCh:
 		}
-		logger.WithFields(logrus.Fields{}).Infoln("ready")
+		logger.WithFields(logrus.Fields{}).Infoln("service is ready")
 		if server.config.OnReady != nil {
 			server.config.OnReady(server)
 		}

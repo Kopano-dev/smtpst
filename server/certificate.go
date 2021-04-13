@@ -34,20 +34,17 @@ func (server *Server) loadCertificate() (tls.Certificate, error) {
 	certificate, err = tls.LoadX509KeyPair(pemFile, pemFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			logger.Infoln("certificate not found, generating a new one...")
-
+			logger.Debugln("client certificate not found, generating")
 			certificate, err = server.generateCertificate()
 			if err != nil {
 				return certificate, fmt.Errorf("failed to generate new certificate: %w", err)
 			}
-
-			logger.Infoln("created a new certificate and saved it to a file")
-
+			logger.Infoln("created new client certificate")
 		} else {
-			return certificate, fmt.Errorf("failed to load certificate from file: %w", err)
+			return certificate, fmt.Errorf("failed to load client certificate from file: %w", err)
 		}
 	} else {
-		logger.Infoln("loaded certificate from file")
+		logger.Debugln("loaded client certificate from file")
 	}
 
 	return certificate, nil
