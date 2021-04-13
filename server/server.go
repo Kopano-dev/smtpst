@@ -151,6 +151,9 @@ func (server *Server) Serve(ctx context.Context) error {
 		case <-server.readyCh:
 		}
 		logger.WithFields(logrus.Fields{}).Infoln("ready")
+		if server.config.OnReady != nil {
+			server.config.OnReady(server)
+		}
 	}()
 
 	var serversWg sync.WaitGroup
