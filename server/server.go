@@ -50,6 +50,7 @@ type Server struct {
 	readyCh  chan struct{}
 	updateCh chan struct{}
 	eventCh  chan *TextEvent
+	statusCh chan struct{}
 
 	licenseClaims []*license.Claims
 }
@@ -63,6 +64,7 @@ func NewServer(c *Config) (*Server, error) {
 		readyCh:  make(chan struct{}, 1),
 		updateCh: make(chan struct{}),
 		eventCh:  make(chan *TextEvent, 128),
+		statusCh: make(chan struct{}),
 	}
 
 	certificate, err := s.loadCertificate()
@@ -182,6 +184,21 @@ func (server *Server) Serve(ctx context.Context) error {
 			errCh <- pumpErr
 		}
 	}()
+
+	if server.config.OnStatus != nil {
+		serversWg.Add(1)
+		go func() {
+			defer serversWg.Done()
+			for {
+				select {
+				case <-server.statusCh:
+					server.config.OnStatus(server)
+				case <-serveCtx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	serversWg.Add(1)
 	// Start and maintain a connection with the smtpst-provider
@@ -408,8 +425,9 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 						"domains":    newDomainsClaims.Domains,
 						"session_id": newDomainsClaims.sessionID,
 					}).Infoln("domains updated")
-					if server.config.OnStatus != nil {
-						server.config.OnStatus(server)
+					select {
+					case server.statusCh <- struct{}{}:
+					default:
 					}
 				}
 
@@ -467,6 +485,10 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 				server.mutex.Lock()
 				server.httpConnected = true
 				server.mutex.Unlock()
+				select {
+				case server.statusCh <- struct{}{}:
+				default:
+				}
 			}
 		case <-ctx.Done():
 			return
@@ -585,6 +607,10 @@ session:
 		server.mutex.Lock()
 		server.httpConnected = false
 		server.mutex.Unlock()
+		select {
+		case server.statusCh <- struct{}{}:
+		default:
+		}
 
 		select {
 		case <-ctx.Done():
