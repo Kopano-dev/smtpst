@@ -19,7 +19,7 @@ func applyFlagsFromEnvFile(cmd *cobra.Command, mapping map[string]string) error 
 	if defaultEnvConfigFile != "" {
 		envConfigFile, err := filepath.Abs(defaultEnvConfigFile)
 		if err != nil {
-			return fmt.Errorf("config flag value invalid: %w", err)
+			return fmt.Errorf("invalid config path: %w", err)
 		}
 
 		var envConfig map[string]string
@@ -31,7 +31,7 @@ func applyFlagsFromEnvFile(cmd *cobra.Command, mapping map[string]string) error 
 		if mapping == nil {
 			mapping = make(map[string]string)
 			cmd.Flags().VisitAll(func(flag *pflag.Flag) {
-				if flag.Changed || flag.Name == "help" {
+				if flag.Changed || flag.Name == "help" || flag.Name == "config" {
 					// Ignore flags which are set already or are on black list.
 					return
 				}
@@ -41,15 +41,33 @@ func applyFlagsFromEnvFile(cmd *cobra.Command, mapping map[string]string) error 
 
 		// Support setting values from config file if they are not set explicitly via flags.
 		for flagName, envName := range mapping {
-			if cmd.Flags().Changed(flagName) {
+			flag := cmd.Flags().Lookup(flagName)
+
+			if flag.Changed {
 				continue
 			}
+
+			// Get value.
+			value := flag.Value
+			// Check if its a slice.
+			sliceValue, isSlice := value.(pflag.SliceValue)
+
+			// Auto generate env name from flag name if not set.
 			if envName == "" {
-				// Auto generate, change all - to _ which is all in most of the cases.
+				// Change all - to _ which is all in most of the cases.
 				envName = strings.ReplaceAll(flagName, "-", "_")
+				if isSlice {
+					// Add an "s" to the end of the envName if its a slice.
+					envName += "s"
+				}
 			}
-			if value, ok := envConfig[envName]; ok {
-				if err = cmd.Flags().Set(flagName, value); err != nil {
+			if v, ok := envConfig[envName]; ok {
+				if isSlice {
+					err = sliceValue.Replace(strings.Split(v, " "))
+				} else {
+					err = flag.Value.Set(v)
+				}
+				if err != nil {
 					return fmt.Errorf("failed to apply %v config: %w", envName, err)
 				}
 			}

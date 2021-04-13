@@ -5,6 +5,10 @@
 
 package main
 
+import (
+	"os"
+)
+
 var (
 	defaultLogTimestamp     = true
 	defaultLogLevel         = "info"
@@ -16,5 +20,5 @@ var (
 	defaultStatePath        = ""
 	defaultLicensesPath     = "/etc/kopano/licenses"
 	defaultIss              = ""
-	defaultEnvConfigFile    = ""
+	defaultEnvConfigFile    = os.Getenv("DEFAULT_ENV_CONFIG")
 )

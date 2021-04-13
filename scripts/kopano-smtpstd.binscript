@@ -16,6 +16,7 @@ DEFAULT_LICENSES_PATH=/etc/kopano/licenses
 DEFAULT_DAGENT_LISTEN=127.0.0.1:10025
 DEFAULT_SMTP_LOCAL=127.0.0.1:25
 DEFAULT_STATE_PATH=/var/lib/kopano-smtpstd
+DEFAULT_ENV_CONFIG=/etc/kopano/smtpstd.cfg
 
 # Helper functions
 
@@ -95,6 +96,15 @@ case "${1}" in
 		fi
 		if [ -n "$state_path" ]; then
 			set -- "$@" --state-path="$state_path"
+		fi
+
+		;;
+
+	status)
+		# Inject into environment, so status is usable by default.
+
+		if [ -n "$DEFAULT_ENV_CONFIG" -a -f "$DEFAULT_ENV_CONFIG" ]; then
+			export DEFAULT_ENV_CONFIG="$DEFAULT_ENV_CONFIG"
 		fi
 
 		;;
