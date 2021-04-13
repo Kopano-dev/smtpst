@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"stash.kopano.io/kgol/ksurveyclient-go/autosurvey"
 
+	"stash.kopano.io/kgol/smtpst/internal/ipc"
 	"stash.kopano.io/kgol/smtpst/server"
 	"stash.kopano.io/kgol/smtpst/version"
 )
@@ -92,6 +93,8 @@ func serve(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid iss: %w", err)
 	}
 
+	var withStatus bool
+
 	cfg := &server.Config{
 		Iss: issURL,
 
@@ -106,6 +109,10 @@ func serve(cmd *cobra.Command, args []string) error {
 				}
 			}
 		},
+		OnStatus: func(srv *server.Server) {
+			onStatus(srv)
+			withStatus = true
+		},
 
 		APIBaseURI: apiBaseURL,
 
@@ -118,6 +125,8 @@ func serve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("state-path invalid: %w", err)
 	}
+
+	ipc.MustInitializeStatusSHM(cfg.StatePath, "")
 
 	cfg.LicensesPath, err = filepath.Abs(defaultLicensesPath)
 	if err != nil {
@@ -156,6 +165,15 @@ func serve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start auto survey: %v", err)
 	}
+
+	defer func() {
+		if withStatus {
+			statusErr := clearStatus()
+			if statusErr != nil {
+				logger.WithError(statusErr).Errorln("failed to clear status")
+			}
+		}
+	}()
 
 	return srv.Serve(ctx)
 }

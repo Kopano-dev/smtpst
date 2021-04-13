@@ -42,8 +42,10 @@ type Server struct {
 	domainsClaims      *DomainsClaims
 	domainsClaimsMutex sync.RWMutex
 
-	httpClient *http.Client
-	DAgent     *dagent.DAgent
+	httpClient    *http.Client
+	httpConnected bool
+
+	DAgent *dagent.DAgent
 
 	readyCh  chan struct{}
 	updateCh chan struct{}
@@ -365,6 +367,10 @@ func (server *Server) Serve(ctx context.Context) error {
 	return err
 }
 
+func (server *Server) Logger() logrus.FieldLogger {
+	return server.logger
+}
+
 // incomingEventsReadPump parses incomming events on the server's event channel.
 // If the domains claims token is almost expiring it'll trigger a refresh from
 // the server.
@@ -399,6 +405,9 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 						"domains":    newDomainsClaims.Domains,
 						"session_id": newDomainsClaims.sessionID,
 					}).Infoln("domains updated")
+					if server.config.OnStatus != nil {
+						server.config.OnStatus(server)
+					}
 				}
 
 			case "receive":
@@ -446,6 +455,20 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 		Factor: 3,
 		Jitter: true,
 	}
+	okCh := make(chan bool, 1)
+	go func() {
+		select {
+		case ok := <-okCh:
+			if ok {
+				bo.Reset()
+				server.mutex.Lock()
+				server.httpConnected = true
+				server.mutex.Unlock()
+			}
+		case <-ctx.Done():
+			return
+		}
+	}()
 
 	sessionURL := server.config.APIBaseURI.ResolveReference(&url.URL{
 		Path: "/v0/smtpst/session",
@@ -549,15 +572,16 @@ session:
 			continue session
 		}
 
-		if connErr := server.receiveFromSMTPSTSession(currentSessionCtx, sessionURL, currentSessionClaims); connErr != nil {
+		if connErr := server.receiveFromSMTPSTSession(currentSessionCtx, sessionURL, currentSessionClaims, okCh); connErr != nil {
 			if errors.Is(connErr, context.Canceled) {
 				logger.Infoln("session closed by client")
 			} else {
 				logger.WithError(connErr).Errorln("session connection error")
 			}
-		} else {
-			bo.Reset()
 		}
+		server.mutex.Lock()
+		server.httpConnected = false
+		server.mutex.Unlock()
 
 		select {
 		case <-ctx.Done():
@@ -571,7 +595,7 @@ session:
 // for new events sent through the connection. The event data will be processed
 // and pushed to the server's event channel. Blocks forever until the connection
 // or the context is closed.
-func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, currentLicenseClaims []*license.Claims) error {
+func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, currentLicenseClaims []*license.Claims, okCh chan<- bool) error {
 	logger := server.logger
 
 	logger.Debugln("connecting session")
@@ -616,6 +640,7 @@ func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, 
 	}
 
 	logger.Debugln("session connection established")
+	okCh <- true
 
 	separator := []byte{':', ' '}
 	currentEvent := &TextEvent{}

@@ -17,7 +17,8 @@ type Config struct {
 
 	Logger logrus.FieldLogger
 
-	OnReady func(*Server)
+	OnReady  func(*Server)
+	OnStatus func(*Server)
 
 	APIBaseURI *url.URL
 
