@@ -10,7 +10,7 @@ set -e
 
 # Base defines.
 
-EXE=/usr/libexec/kopano-smtpst/smtpstd
+EXE=/usr/libexec/kopano/smtpstd
 DEFAULT_PROVIDER_URL=
 DEFAULT_LICENSES_PATH=/etc/kopano/licenses
 DEFAULT_DAGENT_LISTEN=127.0.0.1:10025
