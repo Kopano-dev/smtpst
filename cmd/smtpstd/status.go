@@ -39,6 +39,10 @@ func commandStatus() *cobra.Command {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
+	if err := applyFlagsFromEnvFile(cmd, nil); err != nil {
+		return err
+	}
+
 	statePath, err := filepath.Abs(defaultStatePath)
 	if err != nil {
 		return fmt.Errorf("state-path invalid: %w", err)

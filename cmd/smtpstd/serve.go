@@ -22,19 +22,6 @@ import (
 	"stash.kopano.io/kgol/smtpst/version"
 )
 
-var (
-	defaultLogTimestamp     = true
-	defaultLogLevel         = "info"
-	defaultSystemdNotify    = false
-	defaultProviderURL      = ""
-	defaultDomains          = []string{}
-	defaultDAgentListenAddr = "127.0.0.1:10025"
-	defaultSMTPLocalAddr    = "127.0.0.1:25"
-	defaultStatePath        = ""
-	defaultLicensesPath     = "/etc/kopano/licenses"
-	defaultIss              = ""
-)
-
 func commandServe() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:   "serve [...args]",
@@ -64,6 +51,10 @@ func commandServe() *cobra.Command {
 }
 
 func serve(cmd *cobra.Command, args []string) error {
+	if err := applyFlagsFromEnvFile(cmd, nil); err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 
 	logger, err := newLogger(!defaultLogTimestamp, defaultLogLevel)

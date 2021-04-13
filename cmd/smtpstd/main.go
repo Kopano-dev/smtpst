@@ -13,6 +13,8 @@ import (
 )
 
 func main() {
+	cmd.RootCmd.PersistentFlags().StringVarP(&defaultEnvConfigFile, "config", "c", defaultEnvConfigFile, "Full path to config file")
+
 	cmd.RootCmd.AddCommand(commandServe())
 	cmd.RootCmd.AddCommand(commandStatus())
 
