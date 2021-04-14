@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/square/go-jose.v2/jwt"
@@ -71,18 +72,23 @@ func (server *Server) refreshDomainsToken(ctx context.Context, domainsClaims *Do
 	server.logger.Debugln("refreshing token")
 	response, requestErr := server.httpClient.Do(withUserAgent(request))
 	if requestErr != nil {
-		return fmt.Errorf("failed refresh token: %w", requestErr)
+		return fmt.Errorf("failed to refresh token: %w", requestErr)
 	}
-	response.Body.Close()
+	defer response.Body.Close()
 
-	if response.StatusCode == http.StatusNotModified {
+	switch response.StatusCode {
+	case http.StatusNoContent:
+		// This is the success case.
+		server.logger.Debugln("refresh triggered")
+		return nil
+	case http.StatusNotModified:
 		server.logger.Debugln("tried to refresh token too early")
-	} else if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("failed to refresh token with unexpected status: %d", response.StatusCode)
+		return nil
+	default:
+		// Probably is a client error, read body and include in message.
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 256))
+		return fmt.Errorf("failed to refresh token with unexpected status: %d, %s", response.StatusCode, strings.TrimSpace(string(message)))
 	}
-	server.logger.Debugln("refresh triggered")
-
-	return nil
 }
 
 // getDomainsClaims locks for reading and returns the domains claims
