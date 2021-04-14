@@ -23,7 +23,7 @@ func applyFlagsFromEnvFile(cmd *cobra.Command, mapping map[string]string) error 
 		}
 
 		var envConfig map[string]string
-		envConfig, err = godotenv.Read(envConfigFile)
+		envConfig, err = godotenv.Read(strings.Split(envConfigFile, ":")...)
 		if err != nil {
 			return fmt.Errorf("config read error: %w", err)
 		}
