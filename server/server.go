@@ -422,7 +422,7 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 					logger.WithFields(logrus.Fields{
 						"domains":    newDomainsClaims.Domains,
 						"session_id": newDomainsClaims.sessionID,
-					}).Infoln("domains updated")
+					}).Infoln("domains claims updated")
 					select {
 					case server.statusCh <- struct{}{}:
 					default:

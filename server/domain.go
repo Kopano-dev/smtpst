@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"gopkg.in/square/go-jose.v2/jwt"
 )
 
@@ -30,6 +32,8 @@ type DomainsClaims struct {
 	raw        string
 	expiration time.Time
 	sessionID  string
+
+	fresh bool
 }
 
 // parseDomainsToken parses a raw string into the DomainsClaims struct.
@@ -147,8 +151,33 @@ func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*Domai
 	server.domainsClaimsMutex.Lock()
 	defer server.domainsClaimsMutex.Unlock()
 	oldDomainsClaims := server.domainsClaims
-	replaced := oldDomainsClaims != domainsClaims
+
+	replaced := func() bool {
+		if oldDomainsClaims == nil && domainsClaims != nil {
+			return true
+		}
+
+		if oldDomainsClaims == domainsClaims {
+			return false
+		}
+
+		if !oldDomainsClaims.fresh {
+			return true
+		}
+
+		if oldDomainsClaims.sessionID != domainsClaims.sessionID {
+			return true
+		}
+
+		if !cmp.Equal(oldDomainsClaims.Domains, domainsClaims.Domains, cmpopts.SortSlices(strings.EqualFold)) {
+			return true
+		}
+
+		return false
+	}()
+
 	server.domainsClaims = domainsClaims
+	server.domainsClaims.fresh = true
 
 	var err error
 	if domainsClaims != nil {
