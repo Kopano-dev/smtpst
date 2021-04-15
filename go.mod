@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.13.2
 	github.com/coreos/go-systemd/v22 v22.2.0
 	github.com/emersion/go-smtp v0.14.0
+	github.com/jinzhu/copier v0.2.9
 	github.com/joho/godotenv v1.3.0
 	github.com/jpillora/backoff v1.0.0
 	github.com/lithammer/shortuuid/v3 v3.0.6

@@ -33,8 +33,6 @@ import (
 
 // Server is our HTTP server implementation.
 type Server struct {
-	mutex sync.RWMutex
-
 	config *Config
 
 	logger logrus.FieldLogger
@@ -42,8 +40,7 @@ type Server struct {
 	domainsClaims      *DomainsClaims
 	domainsClaimsMutex sync.RWMutex
 
-	httpClient    *http.Client
-	httpConnected bool
+	httpClient *http.Client
 
 	DAgent *dagent.DAgent
 
@@ -52,7 +49,10 @@ type Server struct {
 	eventCh  chan *TextEvent
 	statusCh chan struct{}
 
-	licenseClaims []*license.Claims
+	status *Status
+
+	licenseClaims      []*license.Claims
+	licenseClaimsMutex sync.RWMutex
 }
 
 // NewServer constructs a server from the provided parameters.
@@ -65,6 +65,10 @@ func NewServer(c *Config) (*Server, error) {
 		updateCh: make(chan struct{}),
 		eventCh:  make(chan *TextEvent, 128),
 		statusCh: make(chan struct{}),
+
+		status: &Status{
+			HTTPProviderURL: c.APIBaseURI.String(),
+		},
 	}
 
 	certificate, err := s.loadCertificate()
@@ -280,18 +284,12 @@ func (server *Server) Serve(ctx context.Context) error {
 			lastSub = sub
 
 			// Update active license claims.
-			server.mutex.Lock()
-			server.licenseClaims = selectedClaims
-			updateCh := server.updateCh
-			server.updateCh = make(chan struct{})
-			server.mutex.Unlock()
-
+			server.updatelicenseClaims(selectedClaims)
 			if first {
 				// Set ready.
 				close(server.readyCh)
 				first = false
 			}
-			close(updateCh)
 			return nil
 		}
 		select {
@@ -482,9 +480,9 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 		case ok := <-okCh:
 			if ok {
 				bo.Reset()
-				server.mutex.Lock()
-				server.httpConnected = true
-				server.mutex.Unlock()
+				server.status.Lock()
+				server.status.HTTPConnected = true
+				server.status.Unlock()
 				select {
 				case server.statusCh <- struct{}{}:
 				default:
@@ -544,9 +542,7 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 			case <-server.updateCh:
 			}
 
-			server.mutex.RLock()
-			currentLicenseClaims := server.licenseClaims
-			server.mutex.RUnlock()
+			currentLicenseClaims := server.getLicenseClaims()
 
 			sessionMutex.Lock()
 			currentsessionCtxCancel := sessionCtxCancel
@@ -604,9 +600,9 @@ session:
 				logger.WithError(connErr).Errorln("session connection error")
 			}
 		}
-		server.mutex.Lock()
-		server.httpConnected = false
-		server.mutex.Unlock()
+		server.status.Lock()
+		server.status.HTTPConnected = false
+		server.status.Unlock()
 		select {
 		case server.statusCh <- struct{}{}:
 		default:
