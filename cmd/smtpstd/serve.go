@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -15,8 +16,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	systemDaemon "github.com/coreos/go-systemd/v22/daemon"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"stash.kopano.io/kgol/ksurveyclient-go/autosurvey"
 
@@ -32,7 +35,12 @@ func commandServe() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := serve(cmd, args); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				var exitCodeErr *ErrorWithExitCode
+				if errors.As(err, &exitCodeErr) {
+					os.Exit(exitCodeErr.Code)
+				} else {
+					os.Exit(1)
+				}
 			}
 		},
 	}
@@ -56,16 +64,39 @@ func commandServe() *cobra.Command {
 }
 
 func serve(cmd *cobra.Command, args []string) error {
+	bs := &bootstrap{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		bs.Wait()
+	}()
+
+	err := bs.configure(ctx, cmd, args)
+	if err != nil {
+		return StartupError(err)
+	}
+
+	return bs.srv.Serve(ctx)
+}
+
+type bootstrap struct {
+	sync.WaitGroup
+
+	logger logrus.FieldLogger
+
+	srv *server.Server
+}
+
+func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if err := applyFlagsFromEnvFile(cmd, nil); err != nil {
 		return err
 	}
-
-	ctx := context.Background()
 
 	logger, err := newLogger(!defaultLogTimestamp, defaultLogLevel)
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
+	bs.logger = logger
 
 	logger.Debugln("serve start")
 
@@ -106,6 +137,17 @@ func serve(cmd *cobra.Command, args []string) error {
 			}
 		},
 		OnStatus: func(srv *server.Server) {
+			if !withStatus {
+				bs.Add(1)
+				go func() {
+					<-ctx.Done()
+					statusErr := clearStatus()
+					if statusErr != nil {
+						logger.WithError(statusErr).Errorln("failed to clear status")
+					}
+				}()
+			}
+
 			onStatus(srv)
 			withStatus = true
 		},
@@ -143,7 +185,7 @@ func serve(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	srv, err := server.NewServer(cfg)
+	bs.srv, err = server.NewServer(cfg)
 	if err != nil {
 		return err
 	}
@@ -185,5 +227,5 @@ func serve(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	return srv.Serve(ctx)
+	return nil
 }

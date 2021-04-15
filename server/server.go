@@ -330,6 +330,7 @@ func (server *Server) Serve(ctx context.Context) error {
 		for {
 			select {
 			case errFromChannel := <-errCh:
+				logger.WithError(errFromChannel).Errorln("fatal error, shutting down")
 				return errFromChannel
 			case reason := <-signalCh:
 				if reason == syscall.SIGHUP {

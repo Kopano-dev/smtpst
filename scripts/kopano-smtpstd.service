@@ -5,7 +5,8 @@ After=network.target
 [Service]
 Type=notify
 NotifyAccess=main
-Restart=on-abnormal
+Restart=on-failure
+RestartPreventExitStatus=64
 PrivateTmp=yes
 PrivateDevices=yes
 DynamicUser=yes
