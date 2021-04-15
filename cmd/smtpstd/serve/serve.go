@@ -3,14 +3,14 @@
  * Copyright 2021 Kopano and its licensors
  */
 
-package main
+package serve
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
-	_ "net/http/pprof"
+	_ "net/http/pprof" // Include pprof for debugging, its only enabled when --with-pprof is given.
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,12 +23,50 @@ import (
 	"github.com/spf13/cobra"
 	"stash.kopano.io/kgol/ksurveyclient-go/autosurvey"
 
+	"stash.kopano.io/kgol/smtpst/cmd/smtpstd/common"
 	"stash.kopano.io/kgol/smtpst/internal/ipc"
 	"stash.kopano.io/kgol/smtpst/server"
 	"stash.kopano.io/kgol/smtpst/version"
 )
 
-func commandServe() *cobra.Command {
+// Default param values used by this command.
+var (
+	DefaultLogTimestamp     = true
+	DefaultLogLevel         = "info"
+	DefaultSystemdNotify    = false
+	DefaultProviderURL      = os.Getenv("SMTPSTD_DEFAULT_PROVIDER_URL")
+	DefaultDomains          = []string{}
+	DefaultDAgentListenAddr = "127.0.0.1:10025"
+	DefaultSMTPLocalAddr    = "127.0.0.1:25"
+	DefaultStatePath        = os.Getenv("SMTPSTD_DEFAULT_STATE_PATH")
+	DefaultLicensesPath     = "/etc/kopano/licenses"
+	DefaultIss              = os.Getenv("SMTPSTD_DEFAULT_OIDC_ISSUER_IDENTIFIER")
+	DefaultWithPprof        = false
+	DefaultPprofListenAddr  = "127.0.0.1:6060"
+)
+
+func init() {
+	envDefaultDAgentListenAddr := os.Getenv("SMTPST_DEFAULT_DAGENT_LISTEN")
+	if envDefaultDAgentListenAddr != "" {
+		DefaultDAgentListenAddr = envDefaultDAgentListenAddr
+	}
+
+	envdefaultSMTPLocalAddr := os.Getenv("SMTPST_DEFAULT_SMTP_LOCAL")
+	if envdefaultSMTPLocalAddr != "" {
+		DefaultSMTPLocalAddr = envdefaultSMTPLocalAddr
+	}
+
+	envDefaultLicensesPath := os.Getenv("SMTPST_DEFAULT_LICENSES_PATH")
+	if envDefaultLicensesPath != "" {
+		DefaultLicensesPath = envDefaultLicensesPath
+	}
+
+	if DefaultStatePath == "" {
+		DefaultStatePath, _ = os.Getwd()
+	}
+}
+
+func CommandServe() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:   "serve [...args]",
 		Short: "Start service",
@@ -45,20 +83,18 @@ func commandServe() *cobra.Command {
 		},
 	}
 
-	cwd, _ := os.Getwd()
-
-	serveCmd.Flags().BoolVar(&defaultLogTimestamp, "log-timestamp", defaultLogTimestamp, "Prefix each log line with timestamp")
-	serveCmd.Flags().StringVar(&defaultLogLevel, "log-level", defaultLogLevel, "Log level (one of panic, fatal, error, warn, info or debug)")
-	serveCmd.Flags().BoolVar(&defaultSystemdNotify, "systemd-notify", defaultSystemdNotify, "Enable systemd sd_notify callback")
-	serveCmd.Flags().StringVar(&defaultProviderURL, "provider-url", defaultProviderURL, "URL to the SMTP secure transport provider API")
-	serveCmd.Flags().StringArrayVar(&defaultDomains, "domain", defaultDomains, "Domain to receive for")
-	serveCmd.Flags().StringVar(&defaultDAgentListenAddr, "dagent-listen", defaultDAgentListenAddr, "TCP listen address for SMTP delivery agent")
-	serveCmd.Flags().StringVar(&defaultSMTPLocalAddr, "smtp-local", defaultSMTPLocalAddr, "TCP address for local SMTP")
-	serveCmd.Flags().StringVar(&defaultStatePath, "state-path", cwd, "Full path to writable state directory")
-	serveCmd.Flags().StringVar(&defaultLicensesPath, "licenses-path", defaultLicensesPath, "Path to the folder containing Kopano license files")
-	serveCmd.Flags().StringVar(&defaultIss, "iss", defaultIss, "OIDC issuer URL")
-	serveCmd.Flags().BoolVar(&defaultWithPprof, "with-pprof", defaultWithPprof, "With pprof enabled")
-	serveCmd.Flags().StringVar(&defaultPprofListenAddr, "pprof-listen", defaultPprofListenAddr, "TCP listen address for pprof")
+	serveCmd.Flags().BoolVar(&DefaultLogTimestamp, "log-timestamp", DefaultLogTimestamp, "Prefix each log line with timestamp")
+	serveCmd.Flags().StringVar(&DefaultLogLevel, "log-level", DefaultLogLevel, "Log level (one of panic, fatal, error, warn, info or debug)")
+	serveCmd.Flags().BoolVar(&DefaultSystemdNotify, "systemd-notify", DefaultSystemdNotify, "Enable systemd sd_notify callback")
+	serveCmd.Flags().StringVar(&DefaultProviderURL, "provider-url", DefaultProviderURL, "URL to the SMTP secure transport provider API")
+	serveCmd.Flags().StringArrayVar(&DefaultDomains, "domain", DefaultDomains, "Domain to receive for")
+	serveCmd.Flags().StringVar(&DefaultDAgentListenAddr, "dagent-listen", DefaultDAgentListenAddr, "TCP listen address for SMTP delivery agent")
+	serveCmd.Flags().StringVar(&DefaultSMTPLocalAddr, "smtp-local", DefaultSMTPLocalAddr, "TCP address for local SMTP")
+	serveCmd.Flags().StringVar(&DefaultStatePath, "state-path", DefaultStatePath, "Full path to writable state directory")
+	serveCmd.Flags().StringVar(&DefaultLicensesPath, "licenses-path", DefaultLicensesPath, "Path to the folder containing Kopano license files")
+	serveCmd.Flags().StringVar(&DefaultIss, "iss", DefaultIss, "OIDC issuer URL")
+	serveCmd.Flags().BoolVar(&DefaultWithPprof, "with-pprof", DefaultWithPprof, "With pprof enabled")
+	serveCmd.Flags().StringVar(&DefaultPprofListenAddr, "pprof-listen", DefaultPprofListenAddr, "TCP listen address for pprof")
 
 	return serveCmd
 }
@@ -88,11 +124,11 @@ type bootstrap struct {
 }
 
 func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []string) error {
-	if err := applyFlagsFromEnvFile(cmd, nil); err != nil {
+	if err := common.ApplyFlagsFromEnvFile(cmd, nil); err != nil {
 		return err
 	}
 
-	logger, err := newLogger(!defaultLogTimestamp, defaultLogLevel)
+	logger, err := newLogger(!DefaultLogTimestamp, DefaultLogLevel)
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -100,7 +136,7 @@ func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []s
 
 	logger.Debugln("serve start")
 
-	apiBaseURL, err := url.Parse(defaultProviderURL)
+	apiBaseURL, err := url.Parse(DefaultProviderURL)
 	if err != nil {
 		return fmt.Errorf("invalid provider-url: %w", err)
 	}
@@ -108,14 +144,14 @@ func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []s
 		return fmt.Errorf("provider-url must not be empty")
 	}
 
-	if defaultStatePath == "" {
+	if DefaultStatePath == "" {
 		return fmt.Errorf("state-path must not be empty")
 	}
-	if info, statErr := os.Stat(defaultStatePath); statErr != nil || !info.IsDir() {
+	if info, statErr := os.Stat(DefaultStatePath); statErr != nil || !info.IsDir() {
 		return fmt.Errorf("state-path error or not a directory: %w", statErr)
 	}
 
-	issURL, err := url.Parse(defaultIss)
+	issURL, err := url.Parse(DefaultIss)
 	if err != nil {
 		return fmt.Errorf("invalid iss: %w", err)
 	}
@@ -128,7 +164,7 @@ func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []s
 		Logger: logger,
 
 		OnReady: func(srv *server.Server) {
-			if defaultSystemdNotify {
+			if DefaultSystemdNotify {
 				ok, notifyErr := systemDaemon.SdNotify(false, systemDaemon.SdNotifyReady)
 				logger.WithField("ok", ok).Debugln("called systemd sd_notify ready")
 				if notifyErr != nil {
@@ -138,8 +174,10 @@ func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []s
 		},
 		OnStatus: func(srv *server.Server) {
 			if !withStatus {
+				withStatus = true
 				bs.Add(1)
 				go func() {
+					defer bs.Done()
 					<-ctx.Done()
 					statusErr := clearStatus()
 					if statusErr != nil {
@@ -149,29 +187,28 @@ func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []s
 			}
 
 			onStatus(srv)
-			withStatus = true
 		},
 
 		APIBaseURI: apiBaseURL,
 
-		DAgentListenAddress: defaultDAgentListenAddr,
+		DAgentListenAddress: DefaultDAgentListenAddr,
 
-		SMTPLocalAddr: defaultSMTPLocalAddr,
+		SMTPLocalAddr: DefaultSMTPLocalAddr,
 	}
 
-	cfg.StatePath, err = filepath.Abs(defaultStatePath)
+	cfg.StatePath, err = filepath.Abs(DefaultStatePath)
 	if err != nil {
 		return fmt.Errorf("state-path invalid: %w", err)
 	}
 
 	ipc.MustInitializeStatusSHM(cfg.StatePath, "")
 
-	cfg.LicensesPath, err = filepath.Abs(defaultLicensesPath)
+	cfg.LicensesPath, err = filepath.Abs(DefaultLicensesPath)
 	if err != nil {
 		return fmt.Errorf("licenses-path invalid: %w", err)
 	}
 
-	for _, domain := range defaultDomains {
+	for _, domain := range DefaultDomains {
 		domain = strings.TrimSpace(domain)
 		if domain != "" {
 			du, parseErr := url.Parse("http://" + domain)
@@ -217,15 +254,6 @@ func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []s
 	if err != nil {
 		return fmt.Errorf("failed to start auto survey: %v", err)
 	}
-
-	defer func() {
-		if withStatus {
-			statusErr := clearStatus()
-			if statusErr != nil {
-				logger.WithError(statusErr).Errorln("failed to clear status")
-			}
-		}
-	}()
 
 	return nil
 }

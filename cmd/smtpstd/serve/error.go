@@ -3,7 +3,7 @@
  * Copyright 2021 Kopano and its licensors
  */
 
-package main
+package serve
 
 const (
 	ExitCodeStartupError = 64

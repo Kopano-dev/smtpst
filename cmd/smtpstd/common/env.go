@@ -3,10 +3,11 @@
  * Copyright 2021 Kopano and its licensors
  */
 
-package main
+package common
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -15,9 +16,13 @@ import (
 	"github.com/spf13/pflag"
 )
 
-func applyFlagsFromEnvFile(cmd *cobra.Command, mapping map[string]string) error {
-	if defaultEnvConfigFile != "" {
-		envConfigFile, err := filepath.Abs(defaultEnvConfigFile)
+var (
+	DefaultEnvConfigFile = os.Getenv("SMTPSTD_DEFAULT_ENV_CONFIG")
+)
+
+func ApplyFlagsFromEnvFile(cmd *cobra.Command, mapping map[string]string) error {
+	if DefaultEnvConfigFile != "" {
+		envConfigFile, err := filepath.Abs(DefaultEnvConfigFile)
 		if err != nil {
 			return fmt.Errorf("invalid config path: %w", err)
 		}

@@ -10,13 +10,16 @@ import (
 	"os"
 
 	"stash.kopano.io/kgol/smtpst/cmd"
+	"stash.kopano.io/kgol/smtpst/cmd/smtpstd/common"
+	"stash.kopano.io/kgol/smtpst/cmd/smtpstd/serve"
+	"stash.kopano.io/kgol/smtpst/cmd/smtpstd/status"
 )
 
 func main() {
-	cmd.RootCmd.PersistentFlags().StringVarP(&defaultEnvConfigFile, "config", "c", defaultEnvConfigFile, "Full path to config file")
+	cmd.RootCmd.PersistentFlags().StringVarP(&common.DefaultEnvConfigFile, "config", "c", common.DefaultEnvConfigFile, "Full path to config file")
 
-	cmd.RootCmd.AddCommand(commandServe())
-	cmd.RootCmd.AddCommand(commandStatus())
+	cmd.RootCmd.AddCommand(serve.CommandServe())
+	cmd.RootCmd.AddCommand(status.CommandStatus())
 
 	if err := cmd.RootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
