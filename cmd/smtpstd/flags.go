@@ -21,6 +21,8 @@ var (
 	defaultLicensesPath     = "/etc/kopano/licenses"
 	defaultIss              = os.Getenv("SMTPSTD_DEFAULT_OIDC_ISSUER_IDENTIFIER")
 	defaultEnvConfigFile    = os.Getenv("SMTPSTD_DEFAULT_ENV_CONFIG")
+	defaultWithPprof        = false
+	defaultPprofListenAddr  = "127.0.0.1:6060"
 )
 
 func init() {

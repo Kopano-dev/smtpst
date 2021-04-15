@@ -8,9 +8,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	systemDaemon "github.com/coreos/go-systemd/v22/daemon"
@@ -46,6 +49,8 @@ func commandServe() *cobra.Command {
 	serveCmd.Flags().StringVar(&defaultStatePath, "state-path", cwd, "Full path to writable state directory")
 	serveCmd.Flags().StringVar(&defaultLicensesPath, "licenses-path", defaultLicensesPath, "Path to the folder containing Kopano license files")
 	serveCmd.Flags().StringVar(&defaultIss, "iss", defaultIss, "OIDC issuer URL")
+	serveCmd.Flags().BoolVar(&defaultWithPprof, "with-pprof", defaultWithPprof, "With pprof enabled")
+	serveCmd.Flags().StringVar(&defaultPprofListenAddr, "pprof-listen", defaultPprofListenAddr, "TCP listen address for pprof")
 
 	return serveCmd
 }
@@ -141,6 +146,20 @@ func serve(cmd *cobra.Command, args []string) error {
 	srv, err := server.NewServer(cfg)
 	if err != nil {
 		return err
+	}
+
+	// Profiling support.
+	withPprof, _ := cmd.Flags().GetBool("with-pprof")
+	pprofListenAddr, _ := cmd.Flags().GetString("pprof-listen")
+	if withPprof && pprofListenAddr != "" {
+		runtime.SetMutexProfileFraction(5)
+		go func() {
+			pprofListen := pprofListenAddr
+			logger.WithField("listenAddr", pprofListen).Infoln("pprof enabled, starting listener")
+			if listenErr := http.ListenAndServe(pprofListen, nil); listenErr != nil {
+				logger.WithError(listenErr).Errorln("unable to start pprof listener")
+			}
+		}()
 	}
 
 	// Survey support.
