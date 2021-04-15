@@ -49,7 +49,12 @@ set_defaults() {
 	if [ -n "$DEFAULT_OIDC_ISSUER_IDENTIFIER" ]; then
 		export SMTPSTD_DEFAULT_OIDC_ISSUER_IDENTIFIER="$DEFAULT_OIDC_ISSUER_IDENTIFIER"
 	fi
+
+	if [ -n "$DEFAULT_STATE_PATH" ]; then
+		export SMTPSTD_DEFAULT_STATE_PATH="$DEFAULT_STATE_PATH"
+	fi
 }
+set_defaults
 
 # Handle parameters for configuration.
 
