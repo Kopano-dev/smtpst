@@ -43,7 +43,7 @@ func man(cmd *cobra.Command, args []string) error {
 
 	root := cmd.Root()
 	root.DisableAutoGenTag = true
-	root.Use = "kopano-smtpstd" // Use the name of bin script for man pages.
+	root.Use = DefaultRootUse // Use the name of bin script for man pages.
 
 	return doc.GenManTree(root, header, DefaultManDir)
 }

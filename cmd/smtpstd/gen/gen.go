@@ -9,6 +9,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// DefaultRootUse defines the root cmmand Use value to use for generators.
+var DefaultRootUse = "kopano-smtpstd"
+
 func CommandGen() *cobra.Command {
 	genCmd := &cobra.Command{
 		Use:   "gen [...args]",
@@ -16,6 +19,7 @@ func CommandGen() *cobra.Command {
 	}
 
 	genCmd.AddCommand(CommandMan())
+	genCmd.AddCommand(CommandAutoComplete())
 
 	return genCmd
 }
