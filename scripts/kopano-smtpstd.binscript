@@ -27,6 +27,30 @@ get_oidc_issuer_from_mailname() {
 	fi
 }
 
+set_defaults() {
+	# Inject defaults into environment, to announce possible overrides.
+
+	if [ -n "$DEFAULT_PROVIDER_URL" ]; then
+		export SMTPSTD_DEFAULT_PROVIDER_URL="$DEFAULT_PROVIDER_URL"
+	fi
+
+	if [ -n "$DEFAULT_DAGENT_LISTEN" ]; then
+		export SMTPSTD_DEFAULT_DAGENT_LISTEN="$DEFAULT_DAGENT_LISTEN"
+	fi
+
+	if [ -n "$DEFAULT_SMTP_LOCAL" ]; then
+		export SMTPSTD_DEFAULT_SMTP_LOCAL="$DEFAULT_SMTP_LOCAL"
+	fi
+
+	if [ -n "$DEFAULT_LICENSES_PATH" ]; then
+		export SMTPSTD_DEFAULT_LICENSES_PATH="$DEFAULT_LICENSES_PATH"
+	fi
+
+	if [ -n "$DEFAULT_OIDC_ISSUER_IDENTIFIER" ]; then
+		export SMTPSTD_DEFAULT_OIDC_ISSUER_IDENTIFIER="$DEFAULT_OIDC_ISSUER_IDENTIFIER"
+	fi
+}
+
 # Handle parameters for configuration.
 
 case "${1}" in
@@ -101,10 +125,9 @@ case "${1}" in
 		;;
 
 	status)
-		# Inject into environment, so status is usable by default.
 
 		if [ -n "$DEFAULT_ENV_CONFIG" -a -f "$DEFAULT_ENV_CONFIG" ]; then
-			export DEFAULT_ENV_CONFIG="$DEFAULT_ENV_CONFIG"
+			export SMTPSTD_DEFAULT_ENV_CONFIG="$DEFAULT_ENV_CONFIG"
 		fi
 
 		;;
