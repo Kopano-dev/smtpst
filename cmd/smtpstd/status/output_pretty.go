@@ -18,6 +18,13 @@ import (
 const prettyTemplate = `
 {{- WithConnectedForground (Bold "provider")}}: {{WithConnectedForground (or .HTTPProviderURL "not set")}}
   {{Bold "connected"}}: {{.HTTPConnected}}
+  {{Bold "licenses"}}:
+    {{- if .HTTPLicenseLIDs}}{{- range .HTTPLicenseLIDs}}
+    - {{.}}
+    {{- end}}
+    {{- else}}
+    - none
+    {{- end}}
 
 {{if .SessionID}}{{WithSessionColor (Bold "session")}}: {{WithSessionColor (printf .SessionID)}}
   {{Bold "expiration"}}: {{.Expiration}}
