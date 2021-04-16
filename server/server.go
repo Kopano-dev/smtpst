@@ -412,11 +412,16 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 					continue
 				}
 
-				domainsClaims = newDomainsClaims
 				logger.WithFields(logrus.Fields{
 					"domains":    newDomainsClaims.Domains,
 					"session_id": newDomainsClaims.sessionID,
 				}).Debugln("domains event received")
+
+				domainsClaims = newDomainsClaims
+				// Mark received domains claims as fresh.
+				domainsClaims.fresh = true
+
+				// Replace with stored claims, if the actual inner values have changed.
 				if _, replaced, err := server.replaceDomainsClaims(domainsClaims); err != nil {
 					logger.WithError(err).Errorln("failed to set domains claims")
 				} else if replaced {

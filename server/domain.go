@@ -161,6 +161,10 @@ func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*Domai
 			return false
 		}
 
+		if domainsClaims == nil {
+			return true
+		}
+
 		if !oldDomainsClaims.fresh {
 			return true
 		}
@@ -177,7 +181,6 @@ func (server *Server) replaceDomainsClaims(domainsClaims *DomainsClaims) (*Domai
 	}()
 
 	server.domainsClaims = domainsClaims
-	server.domainsClaims.fresh = true
 
 	var err error
 	if domainsClaims != nil {
