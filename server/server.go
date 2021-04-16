@@ -45,7 +45,6 @@ type Server struct {
 	DAgent *dagent.DAgent
 
 	readyCh  chan struct{}
-	updateCh chan struct{}
 	eventCh  chan *TextEvent
 	statusCh chan struct{}
 
@@ -53,6 +52,7 @@ type Server struct {
 
 	licenseClaims      []*license.Claims
 	licenseClaimsMutex sync.RWMutex
+	licenseClaimsCh    chan []*license.Claims
 }
 
 // NewServer constructs a server from the provided parameters.
@@ -62,9 +62,10 @@ func NewServer(c *Config) (*Server, error) {
 		logger: c.Logger,
 
 		readyCh:  make(chan struct{}, 1),
-		updateCh: make(chan struct{}),
 		eventCh:  make(chan *TextEvent, 128),
 		statusCh: make(chan struct{}),
+
+		licenseClaimsCh: make(chan []*license.Claims, 1),
 
 		status: &Status{
 			HTTPProviderURL: c.APIBaseURI.String(),
@@ -542,13 +543,14 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 	var sessionCh = make(chan struct{})
 	go func() {
 		for {
+			var currentLicenseClaims []*license.Claims
+
 			select {
 			case <-ctx.Done():
 				return
-			case <-server.updateCh:
+			case licenseClaims := <-server.licenseClaimsCh:
+				currentLicenseClaims = licenseClaims
 			}
-
-			currentLicenseClaims := server.getLicenseClaims()
 
 			sessionMutex.Lock()
 			currentsessionCtxCancel := sessionCtxCancel

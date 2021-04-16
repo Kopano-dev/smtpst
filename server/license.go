@@ -18,11 +18,7 @@ func (server *Server) getLicenseClaims() []*license.Claims {
 // updatelicenseClaims updates active license claims.
 func (server *Server) updatelicenseClaims(licenseClaims []*license.Claims) {
 	server.licenseClaimsMutex.Lock()
-	defer server.licenseClaimsMutex.Unlock()
-
 	server.licenseClaims = licenseClaims
-	updateCh := server.updateCh
-	server.updateCh = make(chan struct{})
-
-	close(updateCh)
+	server.licenseClaimsMutex.Unlock()
+	server.licenseClaimsCh <- licenseClaims
 }
