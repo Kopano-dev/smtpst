@@ -151,18 +151,6 @@ func (server *Server) Serve(ctx context.Context) error {
 
 	logger := server.logger
 
-	go func() {
-		select {
-		case <-serveCtx.Done():
-			return
-		case <-server.readyCh:
-		}
-		logger.WithFields(logrus.Fields{}).Infoln("service is ready")
-		if server.config.OnReady != nil {
-			server.config.OnReady(server)
-		}
-	}()
-
 	var serversWg sync.WaitGroup
 
 	// Start DAgent
@@ -206,9 +194,22 @@ func (server *Server) Serve(ctx context.Context) error {
 	}
 
 	serversWg.Add(1)
-	// Start and maintain a connection with the smtpst-provider
+	// Start and maintain a connection with the smtpst-provider when service
+	// becomes ready.
 	go func() {
 		defer serversWg.Done()
+
+		select {
+		case <-serveCtx.Done():
+			return
+		case <-server.readyCh:
+		}
+		logger.WithFields(logrus.Fields{}).Infoln("service is ready")
+		if server.config.OnReady != nil {
+			server.config.OnReady(server)
+		}
+
+		// Connect session.
 		startErr := server.startSMTPSTSession(serveCtx)
 		if startErr != nil {
 			errCh <- startErr
@@ -576,6 +577,7 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 		return nil
 	}
 
+	var standby bool
 session:
 	for {
 		sessionMutex.RLock()
@@ -601,7 +603,8 @@ session:
 			continue session
 		}
 
-		if connErr := server.receiveFromSMTPSTSession(currentSessionCtx, sessionURL, currentSessionClaims, okCh); connErr != nil {
+		connErr := server.receiveFromSMTPSTSession(currentSessionCtx, sessionURL, currentSessionClaims, okCh)
+		if connErr != nil {
 			if errors.Is(connErr, context.Canceled) {
 				logger.Infoln("session closed by client")
 			} else {
@@ -614,6 +617,19 @@ session:
 		select {
 		case server.statusCh <- struct{}{}:
 		default:
+		}
+
+		if connErr == nil {
+			// Ended up here without an error, retry after fixed interval.
+			if !standby {
+				logger.Warnln("no license available, sending service to sleep")
+				standby = true
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(60 * time.Second):
+			}
 		}
 
 		select {
@@ -631,21 +647,30 @@ session:
 func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, currentLicenseClaims []*license.Claims, okCh chan<- bool) error {
 	logger := server.logger
 
-	logger.Debugln("connecting session")
-
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+	request, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+	if requestErr != nil {
+		return fmt.Errorf("failed to create smtpst session request: %w", requestErr)
+	}
 
 	secret := server.getDevSecretFromEnv()
-	if secret != "" {
+	switch {
+	case secret != "":
 		logger.Warnln("authenticating session with dev secret")
 		request.SetBasicAuth("dev", secret)
-	} else if len(currentLicenseClaims) > 0 {
+
+	case len(currentLicenseClaims) > 0:
 		logger.WithField("id", currentLicenseClaims[0].LicenseID).Infoln("authenticating session with license claims")
 		request.Header.Set("Authorization", "Bearer "+string(currentLicenseClaims[0].Raw))
 		for _, clc := range currentLicenseClaims[1:] {
 			request.Header.Set("X-Smtpst-License", string(clc.Raw))
 		}
+
+	default:
+		// Refuse action when without credentials.
+		return nil
 	}
+
+	logger.Debugln("connecting session")
 
 	response, requestErr := server.httpClient.Do(withUserAgent(request))
 	if requestErr != nil {

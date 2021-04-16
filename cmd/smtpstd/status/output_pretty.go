@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"text/template"
+	"time"
 
 	"github.com/muesli/termenv"
 
@@ -27,7 +28,7 @@ const prettyTemplate = `
     {{- end}}
 
 {{if .SessionID}}{{WithSessionColor (Bold "session")}}: {{WithSessionColor (printf .SessionID)}}
-  {{Bold "expiration"}}: {{.Expiration}}
+  {{Bold "expiration"}}: {{.Expiration | formatAsDateWithExpiration}}
   {{Bold "domains"}}:
     {{- range .Domains}}
     - {{.}}
@@ -64,6 +65,15 @@ func templateFuncs(p termenv.Profile, status *server.Status) template.FuncMap {
 		"WithSessionColor": func(values ...interface{}) string {
 			s := termenv.String(fmt.Sprintf("%v", values[len(values)-1])).Foreground(sessionColor)
 			return s.String()
+		},
+		"formatAsDateWithExpiration": func(t time.Time) string {
+			now := time.Now()
+			if t.Before(now) {
+				s := t.String() + " (expired)"
+				return termenv.String(s).Foreground(nokColor).String()
+			} else {
+				return t.String()
+			}
 		},
 	}
 }

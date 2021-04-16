@@ -19,13 +19,9 @@ func onStatus(srv *server.Server) {
 		s = &server.Status{}
 	}
 
-	logger.Debugln("server status store start", s.HTTPConnected)
-
 	statusErr = ipc.SetStatus(s)
 	if statusErr != nil {
 		logger.WithError(statusErr).Errorln("failed to share server status")
-	} else {
-		logger.Debugln("server status stored to shm successfully")
 	}
 }
 
