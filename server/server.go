@@ -373,6 +373,8 @@ func (server *Server) Serve(ctx context.Context) error {
 	// Cancel our own context and wait for all services to shutdown.
 	serveCtxCancel()
 	func() {
+		deadlineCtx, deadlineCtxCancel := context.WithDeadline(ctx, time.Now().Add(15*time.Second))
+		defer deadlineCtxCancel()
 		for {
 			select {
 			case <-exitCh:
@@ -385,6 +387,9 @@ func (server *Server) Serve(ctx context.Context) error {
 			select {
 			case reason := <-signalCh:
 				logger.WithField("signal", reason).Warn("received signal")
+				return
+			case <-deadlineCtx.Done():
+				logger.WithError(ctx.Err()).Errorln("deadline for clean exit reached, forcing exit")
 				return
 			case <-time.After(100 * time.Millisecond):
 			}
