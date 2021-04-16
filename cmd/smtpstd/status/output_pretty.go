@@ -16,15 +16,16 @@ import (
 )
 
 const prettyTemplate = `
-{{- WithConnectedForground (Bold "provider")}}: {{WithConnectedForground .HTTPProviderURL}}
+{{- WithConnectedForground (Bold "provider")}}: {{WithConnectedForground (or .HTTPProviderURL "not set")}}
   {{Bold "connected"}}: {{.HTTPConnected}}
 
-{{WithSessionColor (Bold "session")}}: {{WithSessionColor (printf .SessionID)}}
+{{if .SessionID}}{{WithSessionColor (Bold "session")}}: {{WithSessionColor (printf .SessionID)}}
   {{Bold "expiration"}}: {{.Expiration}}
   {{Bold "domains"}}:
     {{- range .Domains}}
     - {{.}}
     {{- end}}
+{{- end}}
 `
 
 func templateFuncs(p termenv.Profile, status *server.Status) template.FuncMap {
