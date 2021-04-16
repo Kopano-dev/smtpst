@@ -4,6 +4,19 @@
 
 
 
+## v0.2.0 (2021-04-16)
+
+- Handle license add/remove/change correctly
+- Add channel broadcaster utility
+- Add atomic comparison setters
+- Split up utils
+- Send service to sleep without credentials
+- Add active license ids to status output
+- Get deadlock race condition on startup
+- Improve status pretty print resilience
+- Add missing check when resetting domains claims
+
+
 ## v0.1.0 (2021-04-15)
 
 - Actually set default values via bin script
