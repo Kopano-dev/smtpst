@@ -14,3 +14,9 @@ type AtomicBool int32
 func (b *AtomicBool) IsSet() bool { return atomic.LoadInt32((*int32)(b)) != 0 }
 func (b *AtomicBool) SetTrue()    { atomic.StoreInt32((*int32)(b), 1) }
 func (b *AtomicBool) SetFalse()   { atomic.StoreInt32((*int32)(b), 0) }
+func (b *AtomicBool) CompareTrueAndSetFalse() bool {
+	return atomic.CompareAndSwapInt32((*int32)(b), 1, 0)
+}
+func (b *AtomicBool) CompareFalseAndSetTrue() bool {
+	return atomic.CompareAndSwapInt32((*int32)(b), 0, 1)
+}
