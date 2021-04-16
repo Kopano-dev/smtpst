@@ -18,9 +18,9 @@ type Status struct {
 
 	HTTPProviderURL string   `json:"provider_url"`
 	HTTPConnected   bool     `json:"provider_connected"`
-	HTTPLicenseLIDs []string `json:"provider_license_ids,omitempty"`
+	HTTPLicenseLIDs []string `json:"provider_license_ids"`
 
-	SessionID  *string    `json:"session_id,omitempty"`
+	SessionID  *string    `json:"session_id"`
 	Domains    []string   `json:"domains"`
 	Expiration *time.Time `json:"exp"`
 }

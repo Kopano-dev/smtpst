@@ -45,22 +45,22 @@ func (server *Server) parseDomainsToken(raw string) (*DomainsClaims, error) {
 
 	claims := &jwt.Claims{}
 	domainsClaims := &DomainsClaims{}
-	if err := token.UnsafeClaimsWithoutVerification(claims, domainsClaims); err != nil {
+	err = token.UnsafeClaimsWithoutVerification(claims, domainsClaims)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := claims.ValidateWithLeeway(jwt.Expected{
+	err = claims.ValidateWithLeeway(jwt.Expected{
 		Time: time.Now(),
-	}, 5*time.Minute); err != nil {
-		return domainsClaims, err
+	}, 5*time.Minute)
+	if err == nil || err == jwt.ErrExpired {
+		// Copy over standard claims.
+		domainsClaims.sessionID = claims.Subject
+		domainsClaims.expiration = claims.Expiry.Time()
+		domainsClaims.raw = raw
 	}
 
-	// Copy over standard claims.
-	domainsClaims.sessionID = claims.Subject
-	domainsClaims.expiration = claims.Expiry.Time()
-	domainsClaims.raw = raw
-
-	return domainsClaims, nil
+	return domainsClaims, err
 }
 
 // refreshDomainsToken issues a request for a new token to be sent.
@@ -120,10 +120,6 @@ func (server *Server) loadDomainsClaims() (*DomainsClaims, error) {
 	}
 
 	domainsClaims, err := server.parseDomainsToken(string(raw))
-	if err != nil {
-		return domainsClaims, err
-	}
-
 	for _, domain := range server.config.Domains {
 		ok := false
 		for _, d := range domainsClaims.Domains {
@@ -138,7 +134,7 @@ func (server *Server) loadDomainsClaims() (*DomainsClaims, error) {
 	}
 
 	server.domainsClaims = domainsClaims
-	return domainsClaims, nil
+	return domainsClaims, err
 }
 
 // replaceDomainsClaims locks for writting and replaces the domains claims only

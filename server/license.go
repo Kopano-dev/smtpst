@@ -20,5 +20,5 @@ func (server *Server) updatelicenseClaims(licenseClaims []*license.Claims) {
 	server.licenseClaimsMutex.Lock()
 	server.licenseClaims = licenseClaims
 	server.licenseClaimsMutex.Unlock()
-	server.licenseClaimsCh <- licenseClaims
+	server.licenseClaimsBc.Broadcast(licenseClaims)
 }

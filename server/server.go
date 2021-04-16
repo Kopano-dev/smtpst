@@ -29,6 +29,7 @@ import (
 	"stash.kopano.io/kgol/kustomer/license"
 
 	"stash.kopano.io/kgol/smtpst/server/smtp/dagent"
+	"stash.kopano.io/kgol/smtpst/utils"
 )
 
 // Server is our HTTP server implementation.
@@ -52,7 +53,7 @@ type Server struct {
 
 	licenseClaims      []*license.Claims
 	licenseClaimsMutex sync.RWMutex
-	licenseClaimsCh    chan []*license.Claims
+	licenseClaimsBc    *utils.Broadcaster
 }
 
 // NewServer constructs a server from the provided parameters.
@@ -65,7 +66,7 @@ func NewServer(c *Config) (*Server, error) {
 		eventCh:  make(chan *TextEvent, 128),
 		statusCh: make(chan struct{}),
 
-		licenseClaimsCh: make(chan []*license.Claims, 1),
+		licenseClaimsBc: utils.NewBroadcaster(),
 
 		status: &Status{
 			HTTPProviderURL: c.APIBaseURI.String(),
@@ -103,7 +104,7 @@ func NewServer(c *Config) (*Server, error) {
 					"domains":    domainsClaims.Domains,
 					"exp":        domainsClaims.expiration,
 					"session_id": domainsClaims.sessionID,
-				}).Warnln("stored domains claims are expired, ignored")
+				}).Warnln("domains claims in local state are expired")
 			}
 		} else if !os.IsNotExist(err) {
 			return nil, err
@@ -113,7 +114,7 @@ func NewServer(c *Config) (*Server, error) {
 			"domains":    domainsClaims.Domains,
 			"exp":        domainsClaims.expiration,
 			"session_id": domainsClaims.sessionID,
-		}).Infoln("loaded domains claims from file")
+		}).Infoln("loaded domains claims from local state")
 	}
 
 	dagentConfig := &dagent.Config{
@@ -214,6 +215,13 @@ func (server *Server) Serve(ctx context.Context) error {
 		if startErr != nil {
 			errCh <- startErr
 		}
+	}()
+
+	// Start license broadcaster.
+	serversWg.Add(1)
+	go func() {
+		defer serversWg.Done()
+		server.licenseClaimsBc.Start(serveCtx)
 	}()
 
 	// Load license files directly.
@@ -484,20 +492,22 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 	}
 	okCh := make(chan bool, 1)
 	go func() {
-		select {
-		case ok := <-okCh:
-			if ok {
-				bo.Reset()
-				server.status.Lock()
-				server.status.HTTPConnected = true
-				server.status.Unlock()
-				select {
-				case server.statusCh <- struct{}{}:
-				default:
+		for {
+			select {
+			case ok := <-okCh:
+				if ok {
+					bo.Reset()
+					server.status.Lock()
+					server.status.HTTPConnected = true
+					server.status.Unlock()
+					select {
+					case server.statusCh <- struct{}{}:
+					default:
+					}
 				}
+			case <-ctx.Done():
+				return
 			}
-		case <-ctx.Done():
-			return
 		}
 	}()
 
@@ -537,24 +547,32 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 		return nil
 	}
 
-	var sessionMutex sync.RWMutex
+	var sessionMutex sync.Mutex
 	var sessionCtx context.Context
 	var sessionCtxCancel context.CancelFunc
 	var sessionClaims []*license.Claims
+	var sessionClaimsIndex uint64
 	var sessionCh = make(chan struct{})
+	var licenseClaimsCh = server.licenseClaimsBc.Subscribe()
 	go func() {
+		first := true
 		for {
 			var currentLicenseClaims []*license.Claims
-
-			select {
-			case <-ctx.Done():
-				return
-			case licenseClaims := <-server.licenseClaimsCh:
-				currentLicenseClaims = licenseClaims
+			if first {
+				first = false
+				currentLicenseClaims = server.getLicenseClaims()
+			} else {
+				// Wait for license claim changes.
+				select {
+				case <-ctx.Done():
+					return
+				case licenseClaims := <-licenseClaimsCh:
+					currentLicenseClaims = licenseClaims.([]*license.Claims)
+				}
 			}
 
 			sessionMutex.Lock()
-			currentsessionCtxCancel := sessionCtxCancel
+			currentSessionCtxCancel := sessionCtxCancel
 			currentSessionCh := sessionCh
 			sessionCh = make(chan struct{})
 			sessionCtx, sessionCtxCancel = context.WithCancel(ctx)
@@ -563,10 +581,11 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 			} else {
 				sessionClaims = make([]*license.Claims, 0)
 			}
+			sessionClaimsIndex++
 			sessionMutex.Unlock()
 			close(currentSessionCh)
-			if currentsessionCtxCancel != nil {
-				currentsessionCtxCancel()
+			if currentSessionCtxCancel != nil {
+				currentSessionCtxCancel()
 			}
 		}
 	}()
@@ -577,14 +596,14 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 		return nil
 	}
 
-	var standby bool
 session:
 	for {
-		sessionMutex.RLock()
+		sessionMutex.Lock()
 		currentSessionCtx := sessionCtx
 		currentSessionClaims := sessionClaims
 		currentSessionCh := sessionCh
-		sessionMutex.RUnlock()
+		currentSessionClaimsIndex := sessionClaimsIndex
+		sessionMutex.Unlock()
 		if currentSessionClaims == nil {
 			select {
 			case <-ctx.Done():
@@ -621,14 +640,21 @@ session:
 
 		if connErr == nil {
 			// Ended up here without an error, retry after fixed interval.
-			if !standby {
-				logger.Warnln("no license available, sending service to sleep")
-				standby = true
-			}
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(60 * time.Second):
+			logger.Warnln("no license available, sending service to sleep")
+
+			// Support automatic wakeup via update of session claims.
+			sessionMutex.Lock()
+			currentSessionCh := sessionCh
+			oldSessionClaimsIndex := currentSessionClaimsIndex
+			currentSessionClaimsIndex := sessionClaimsIndex
+			sessionMutex.Unlock()
+			if oldSessionClaimsIndex == currentSessionClaimsIndex {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-currentSessionCh:
+					logger.Warnln("service is waking up")
+				}
 			}
 		}
 
