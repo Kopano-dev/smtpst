@@ -439,11 +439,13 @@ func (server *Server) incomingEventsReadPump(ctx context.Context) error {
 				// Replace with stored claims, if the actual inner values have changed.
 				if _, replaced, err := server.replaceDomainsClaims(domainsClaims); err != nil {
 					logger.WithError(err).Errorln("failed to set domains claims")
-				} else if replaced {
-					logger.WithFields(logrus.Fields{
-						"domains":    newDomainsClaims.Domains,
-						"session_id": newDomainsClaims.sessionID,
-					}).Infoln("domains claims updated")
+				} else {
+					if replaced {
+						logger.WithFields(logrus.Fields{
+							"domains":    newDomainsClaims.Domains,
+							"session_id": newDomainsClaims.sessionID,
+						}).Infoln("domains claims updated")
+					}
 					select {
 					case server.statusCh <- struct{}{}:
 					default:
