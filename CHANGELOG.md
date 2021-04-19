@@ -4,6 +4,12 @@
 
 
 
+## v0.2.1 (2021-04-19)
+
+- Always write updated status
+- Add clean exit deadline
+
+
 ## v0.2.0 (2021-04-16)
 
 - Handle license add/remove/change correctly
