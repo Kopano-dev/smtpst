@@ -31,18 +31,19 @@ import (
 
 // Default param values used by this command.
 var (
-	DefaultLogTimestamp     = true
-	DefaultLogLevel         = "info"
-	DefaultSystemdNotify    = false
-	DefaultProviderURL      = os.Getenv("SMTPSTD_DEFAULT_PROVIDER_URL")
-	DefaultDomains          = []string{}
-	DefaultDAgentListenAddr = "127.0.0.1:10025"
-	DefaultSMTPLocalAddr    = "127.0.0.1:25"
-	DefaultStatePath        = os.Getenv("SMTPSTD_DEFAULT_STATE_PATH")
-	DefaultLicensesPath     = "/etc/kopano/licenses"
-	DefaultIss              = os.Getenv("SMTPSTD_DEFAULT_OIDC_ISSUER_IDENTIFIER")
-	DefaultWithPprof        = false
-	DefaultPprofListenAddr  = "127.0.0.1:6060"
+	DefaultLogTimestamp         = true
+	DefaultLogLevel             = "info"
+	DefaultSystemdNotify        = false
+	DefaultProviderURL          = os.Getenv("SMTPSTD_DEFAULT_PROVIDER_URL")
+	DefaultDomains              = []string{}
+	DefaultPreferredDomainBases = []string{}
+	DefaultDAgentListenAddr     = "127.0.0.1:10025"
+	DefaultSMTPLocalAddr        = "127.0.0.1:25"
+	DefaultStatePath            = os.Getenv("SMTPSTD_DEFAULT_STATE_PATH")
+	DefaultLicensesPath         = "/etc/kopano/licenses"
+	DefaultIss                  = os.Getenv("SMTPSTD_DEFAULT_OIDC_ISSUER_IDENTIFIER")
+	DefaultWithPprof            = false
+	DefaultPprofListenAddr      = "127.0.0.1:6060"
 )
 
 func init() {
@@ -88,6 +89,7 @@ func CommandServe() *cobra.Command {
 	serveCmd.Flags().BoolVar(&DefaultSystemdNotify, "systemd-notify", DefaultSystemdNotify, "Enable systemd sd_notify callback")
 	serveCmd.Flags().StringVar(&DefaultProviderURL, "provider-url", DefaultProviderURL, "URL to the SMTP secure transport provider API")
 	serveCmd.Flags().StringArrayVar(&DefaultDomains, "domain", DefaultDomains, "Domain to receive for")
+	serveCmd.Flags().StringArrayVar(&DefaultPreferredDomainBases, "preferred-base", DefaultPreferredDomainBases, "The preferred domain base, multiple allowed")
 	serveCmd.Flags().StringVar(&DefaultDAgentListenAddr, "dagent-listen", DefaultDAgentListenAddr, "TCP listen address for SMTP delivery agent")
 	serveCmd.Flags().StringVar(&DefaultSMTPLocalAddr, "smtp-local", DefaultSMTPLocalAddr, "TCP address for local SMTP")
 	serveCmd.Flags().StringVar(&DefaultStatePath, "state-path", DefaultStatePath, "Full path to writable state directory")
@@ -194,6 +196,8 @@ func (bs *bootstrap) configure(ctx context.Context, cmd *cobra.Command, args []s
 		DAgentListenAddress: DefaultDAgentListenAddr,
 
 		SMTPLocalAddr: DefaultSMTPLocalAddr,
+
+		PreferredDomainBases: DefaultPreferredDomainBases,
 	}
 
 	cfg.StatePath, err = filepath.Abs(DefaultStatePath)

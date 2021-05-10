@@ -531,7 +531,9 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 			}
 		}
 
-		params := url.Values{}
+		params := url.Values{
+			"preferred_base": server.config.PreferredDomainBases,
+		}
 		if domainsClaims := server.getDomainsClaims(); domainsClaims == nil {
 			for _, domain := range server.config.Domains {
 				params.Add("domain", domain)
