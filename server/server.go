@@ -13,11 +13,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -727,11 +729,14 @@ func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, 
 			return fmt.Errorf("failed to replace domains claims: %w", err)
 		} else if replaced {
 			logger.WithField("session_id", domainsClaims.sessionID).Warnln("failed to resume smtpst session, clearing session data")
-			return fmt.Errorf("failed to create smtpst session with not acceptable response: %d", response.StatusCode)
+			message, _ := io.ReadAll(io.LimitReader(response.Body, 256))
+			return fmt.Errorf("failed to create smtpst session with not acceptable response: %d, %s", response.StatusCode, strings.TrimSpace(string(message)))
 		}
 		fallthrough
 	default:
-		return fmt.Errorf("failed to create smtpst session with unexpected status: %d", response.StatusCode)
+		// Probably is a client error, read body and include in message.
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 256))
+		return fmt.Errorf("failed to create smtpst session with unexpected status: %d, %s", response.StatusCode, strings.TrimSpace(string(message)))
 	}
 
 	logger.Debugln("session connection established")
