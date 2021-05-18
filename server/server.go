@@ -694,11 +694,13 @@ func (server *Server) receiveFromSMTPSTSession(ctx context.Context, u *url.URL, 
 		request.SetBasicAuth("dev", secret)
 
 	case len(currentLicenseClaims) > 0:
-		logger.WithField("id", currentLicenseClaims[0].LicenseID).Infoln("authenticating session with license claims")
+		licenseIds := []string{currentLicenseClaims[0].LicenseID}
 		request.Header.Set("Authorization", "Bearer "+string(currentLicenseClaims[0].Raw))
 		for _, clc := range currentLicenseClaims[1:] {
 			request.Header.Set("X-Smtpst-License", string(clc.Raw))
+			licenseIds = append(licenseIds, clc.LicenseID)
 		}
+		logger.WithField("license_ids", licenseIds).Infoln("authenticating session with license claims")
 
 	default:
 		// Refuse action when without credentials.
