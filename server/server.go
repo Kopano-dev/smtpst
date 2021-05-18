@@ -545,7 +545,7 @@ func (server *Server) startSMTPSTSession(ctx context.Context) error {
 			}
 		} else {
 			logger.WithField("session_id", domainsClaims.sessionID).Debugln("reusing existing session")
-			for _, domain := range domainsClaims.Domains {
+			for _, domain := range server.config.Domains {
 				params.Add("domain", domain)
 			}
 			params.Set("sid", domainsClaims.sessionID)
