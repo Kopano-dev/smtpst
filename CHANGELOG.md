@@ -4,6 +4,11 @@
 
 
 
+## v0.3.1 (2021-05-19)
+
+- Expose preferred_base in configuration
+
+
 ## v0.3.0 (2021-05-19)
 
 - Improve error detail for response errors in session API
