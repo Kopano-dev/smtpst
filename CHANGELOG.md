@@ -4,6 +4,14 @@
 
 
 
+## v0.3.0 (2021-05-19)
+
+- Improve error detail for response errors in session API
+- Log license ids used for session authentication
+- Always pass configured domains to server if any
+- Add support for perferred base config
+
+
 ## v0.2.1 (2021-04-19)
 
 - Always write updated status
