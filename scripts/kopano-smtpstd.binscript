@@ -100,6 +100,12 @@ case "${1}" in
 			done
 		fi
 
+		if [ -n "$preferred_base" ]; then
+			for base in $preferred_base; do
+				set -- "$@" --preferred-base="$base"
+			done
+		fi
+
 		if [ -z "$dagent_listen" ]; then
 			if [ -n "$DEFAULT_DAGENT_LISTEN" ]; then
 				dagent_listen=$DEFAULT_DAGENT_LISTEN
