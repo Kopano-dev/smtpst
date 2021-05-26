@@ -4,6 +4,12 @@
 
 
 
+## v0.3.2 (2021-05-26)
+
+- Prepare postmaster email error reporting support
+- Fix a bunch of typos in the config example
+
+
 ## v0.3.1 (2021-05-19)
 
 - Expose preferred_base in configuration
