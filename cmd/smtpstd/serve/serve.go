@@ -44,6 +44,7 @@ var (
 	DefaultIss                  = os.Getenv("SMTPSTD_DEFAULT_OIDC_ISSUER_IDENTIFIER")
 	DefaultWithPprof            = false
 	DefaultPprofListenAddr      = "127.0.0.1:6060"
+	DefaultPostmasterEmail      = "" // TODO(longsleep): Implement postmaster error reporting via email.
 )
 
 func init() {
