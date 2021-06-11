@@ -4,6 +4,12 @@
 
 
 
+## v0.3.3 (2021-06-11)
+
+- Disable input when not running in a TTY
+- Add readme
+
+
 ## v0.3.2 (2021-05-26)
 
 - Prepare postmaster email error reporting support
