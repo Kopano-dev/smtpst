@@ -26,7 +26,7 @@ func Run(cmd *cobra.Command, args []string) error {
 
 		if !isatty.IsTerminal(os.Stdout.Fd()) {
 			// If not a terminal, disable user interface.
-			opts = []tea.ProgramOption{tea.WithoutRenderer()}
+			opts = []tea.ProgramOption{tea.WithoutRenderer(), tea.WithInput(nil)}
 		} else {
 			// If user interface, discard all log output.
 			log.SetOutput(ioutil.Discard)
